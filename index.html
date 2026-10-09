@@ -754,13 +754,30 @@ function openLotEditor(ei=-1,idx=-1){
 function fillLotStageOptions(ei,selected){const sel=document.getElementById('lfStage');sel.innerHTML=lotStageOptions(ei,selected).map(x=>`<option ${String(x)===String(selected)?'selected':''}>${esc(x)}</option>`).join('')}
 function setLotForm(l){document.getElementById('lfLot').value=l[0]||'';document.getElementById('lfStage').value=l[1]||'Stage 1';document.getElementById('lfFrontage').value=l[2]||'';document.getElementById('lfArea').value=l[3]||'';document.getElementById('lfPrice').value=(l[5]===null||l[5]===undefined)?'':l[5];document.getElementById('lfStatus').value=l[6]||'Available';document.getElementById('lfTitle').value=l[4]||'';document.getElementById('lfStreet').value=lotExtra(l,8,'');document.getElementById('lfOrientation').value=lotExtra(l,7,'');document.getElementById('lfNotes').value=lotExtra(l,10,'');const selected=lotFeatures(l);document.getElementById('lfFeatures').innerHTML=LOT_FEATURES.map(f=>`<button type="button" class="lot-feature-chip ${selected.includes(f)?'active':''}" onclick="this.classList.toggle('active')" data-feature="${esc(f)}">${esc(f)}</button>`).join('')}
 function closeLotEditor(){document.getElementById('lotEditor')?.classList.add('hidden');const es=document.getElementById('lfEstate');if(es)es.disabled=false;lotEditorIndex=-1;lotEditorKey=''}
+function refreshVisitorLotAfterSave(k,l){
+ // Keep the currently selected visitor lot linked to the updated DB row.
+ if(selected && String(selected[0])===String(l[0]) && currentKey===k){
+  selected=l;
+  const active=document.querySelector('.page.active');
+  if(active && active.id==='lot'){
+   // Rebuild the open lot details so the new price/status is immediately visible.
+   openLot();
+  }else if(active && active.id==='enquiry'){
+   const interest=document.getElementById('interestLot');
+   if(interest) interest.textContent=currentEstate+' • Lot '+l[0]+' • '+money(l[5]);
+  }else if(active && active.id==='master'){
+   renderPanel();
+   selectLot(l);
+  }
+ }
+}
 function saveLotEditor(){
  const ei=Number(document.getElementById('lfEstate').value),k=estateKeyFor(ei);if(!DB[k])DB[k]=[];
  const lotNo=document.getElementById('lfLot').value.trim();if(!lotNo){alert('Please enter a lot number.');return}
  const duplicate=DB[k].findIndex((l,i)=>i!==lotEditorIndex&&String(l[0]).trim().toLowerCase()===lotNo.toLowerCase());if(duplicate>=0){alert('That lot number already exists in this estate.');return}
  const p=document.getElementById('lfPrice').value;const features=[...document.querySelectorAll('#lfFeatures .lot-feature-chip.active')].map(b=>b.dataset.feature);
- const old=lotEditorIndex>=0?DB[k][lotEditorIndex]:[];const l=[lotNo,document.getElementById('lfStage').value,document.getElementById('lfFrontage').value.trim(),document.getElementById('lfArea').value.trim(),document.getElementById('lfTitle').value.trim(),p===''?null:Number(p),document.getElementById('lfStatus').value,document.getElementById('lfOrientation').value,document.getElementById('lfStreet').value.trim(),features,document.getElementById('lfNotes').value.trim(),new Date().toISOString()];
- if(lotEditorIndex>=0) DB[k][lotEditorIndex]=l; else DB[k].push(l);saveAdminDB();showLotSavedNotice('Lot '+String(lotNo)+' saved locally on this kiosk.');closeLotEditor();lotManagerEstateIndex=ei;lotManagerState.estate=String(ei);renderLotManager();renderEstateAdmin();
+ const l=[lotNo,document.getElementById('lfStage').value,document.getElementById('lfFrontage').value.trim(),document.getElementById('lfArea').value.trim(),document.getElementById('lfTitle').value.trim(),p===''?null:Number(p),document.getElementById('lfStatus').value,document.getElementById('lfOrientation').value,document.getElementById('lfStreet').value.trim(),features,document.getElementById('lfNotes').value.trim(),new Date().toISOString()];
+ if(lotEditorIndex>=0) DB[k][lotEditorIndex]=l; else DB[k].push(l);saveAdminDB();refreshVisitorLotAfterSave(k,l);showLotSavedNotice('Lot '+String(lotNo)+' saved locally on this kiosk.');closeLotEditor();lotManagerEstateIndex=ei;lotManagerState.estate=String(ei);renderLotManager();renderEstateAdmin();
 }
 function duplicateLot(ei,idx){const k=estateKeyFor(ei),src=DB[k]?.[idx];if(!src)return;const base=String(src[0]||'New');let n=base+' Copy',c=2;while(DB[k].some(l=>String(l[0]).toLowerCase()===n.toLowerCase()))n=base+' Copy '+c++;const copy=src.slice();copy[0]=n;copy[6]='Available';copy[11]=new Date().toISOString();DB[k].push(copy);saveAdminDB();lotManagerState.estate=String(ei);renderLotManager()}
 function deleteManagedLot(ei,idx){const k=estateKeyFor(ei),l=DB[k]?.[idx];if(!l)return;if(!confirm(`Delete Lot ${l[0]} from ${getEstateRecords()[ei]?.name||'this estate'}?`))return;const b=boundariesFor(ei);if(b&&b[String(l[0])]){delete b[String(l[0])];saveBoundaries(ei,b)}DB[k].splice(idx,1);saveAdminDB();renderLotManager();renderEstateAdmin()}

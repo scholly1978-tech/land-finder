@@ -246,7 +246,7 @@ function buildOverlay(){
  let boundarySet={};
  try{const ei=getEstateRecords().findIndex(e=>estateKeyFor(getEstateRecords().indexOf(e))===currentKey);if(ei>=0)boundarySet=boundariesFor(ei)||{}}catch(e){}
  lots.forEach(l=>{
-  let points=boundarySet[String(l[0])];
+  let points=(window.LF_CLOUD_BOUNDARIES?.[currentKey]?.[String(l[0])]) || boundarySet[String(l[0])];
   if(!points) points=precisionPolygon(currentKey,l[0]);
   const r=map[l[0]];
   if(!points&&r){const [x1,y1,x2,y2]=r;points=[[x1,y1],[x2,y1],[x2,y2],[x1,y2]]}
@@ -574,7 +574,7 @@ body{background:#f5f2ee}
     <div id="workspaceOverview" class="workspace-pane"></div><div id="workspaceStages" class="workspace-pane hidden"></div><div id="workspaceLots" class="workspace-pane hidden"></div><div id="workspaceMap" class="workspace-pane hidden"></div>
   </div></div>
 
-  <div id="lotManager" class="modal hidden lot-modal"><div class="modal-panel lot-manager-panel"><div class="modal-head"><div><div class="eyebrow">INVENTORY MANAGEMENT</div><h2>Lot Management</h2><div class="muted small">Maintain the live land inventory shown on the visitor kiosk. Changes are saved locally on this kiosk.</div></div><button class="icon-btn" onclick="closeLotManagement()">×</button></div><div id="lotManagerBody" class="lot-manager-body"></div></div></div>
+  <div id="lotManager" class="modal hidden lot-modal"><div class="modal-panel lot-manager-panel"><div class="modal-head"><div><div class="eyebrow">INVENTORY MANAGEMENT</div><h2>Lot Management</h2><div class="muted small">Maintain the live land inventory shown on the visitor kiosk. Cloud lot editing saves to Supabase.</div></div><button class="icon-btn" onclick="closeLotManagement()">×</button></div><div id="lotManagerBody" class="lot-manager-body"></div></div></div>
 
   <div id="lotEditor" class="modal hidden lot-modal"><div class="modal-panel"><div class="modal-head"><div><div class="eyebrow">LOT DETAILS</div><h2 id="lotEditorTitle">Add Lot</h2><div id="lotEditorSub" class="muted small"></div></div><button class="icon-btn" onclick="closeLotEditor()">×</button></div>
     <div style="padding:20px 24px 8px"><div class="lot-form-grid">
@@ -1947,6 +1947,331 @@ document.addEventListener('keydown',function(ev){
   }
   document.addEventListener('DOMContentLoaded',()=>{polishHome();touchPolish();});
   setTimeout(()=>{polishHome();touchPolish()},250);
+})();
+</script>
+<!-- Land Finder Cloud Visitor Test v1: READ ONLY. Local Admin remains local. -->
+<style>#lfCloudStatus{position:fixed;right:12px;bottom:12px;z-index:99999;background:#202b2b;color:#fff;padding:10px 14px;border-radius:9px;font:13px Arial,sans-serif;max-width:320px;box-shadow:0 3px 12px #0004}#lfCloudStatus button{margin-left:9px;border:1px solid #fff9;border-radius:5px;background:transparent;color:white;padding:4px 8px;cursor:pointer}</style>
+<div id="lfCloudStatus" role="status">Cloud lots: loading… <button type="button" id="lfCloudRefresh">Refresh</button></div>
+<script>
+/* Public Supabase REST reads only; uses browser-safe publishable key. */
+(function(){
+'use strict';
+const ROOT='https://ajlbququbswnmzmbkiro.supabase.co/rest/v1/';
+const KEY='sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43';
+const status=document.getElementById('lfCloudStatus');
+let busy=false, lastError='';
+function note(message){status.firstChild.textContent=message+' ';}
+async function read(table,params){
+ const res=await fetch(ROOT+table+'?'+params,{headers:{'apikey':KEY,'Authorization':'Bearer '+KEY,'Accept':'application/json'},cache:'no-store'});
+ if(!res.ok)throw Error(table+' HTTP '+res.status+': '+(await res.text()).slice(0,160));
+ return res.json();
+}
+async function refreshCloud(){
+ if(busy)return;busy=true;note('Cloud lots: checking…');
+ try{
+  const [estates,lots,stages]=await Promise.all([
+   read('estates','select=id,estate_key,name,active&active=eq.true'),
+   read('lots','select=estate_id,stage_id,lot_number,frontage,area,title,price,status,orientation,street,features,notes,boundary&limit=1000'),
+   read('stages','select=id,name&limit=1000')
+  ]);
+  const stageById=new Map(stages.map(x=>[x.id,x.name]));
+  const grouped=new Map();
+  window.LF_CLOUD_BOUNDARIES=window.LF_CLOUD_BOUNDARIES||{};
+  for(const l of lots){if(!grouped.has(l.estate_id))grouped.set(l.estate_id,[]);grouped.get(l.estate_id).push(l);}
+  let count=0,matched=0;
+  for(const e of estates){
+   const key=String(e.estate_key||'').trim();
+   // The existing kiosk uses wal / alf / gow, or estateKeyFor(i) for added estates.
+   const known=typeof DB!=='undefined' && (Object.prototype.hasOwnProperty.call(DB,key)|| (typeof getEstateRecords==='function'&&getEstateRecords().some((_,i)=>estateKeyFor(i)===key)));
+   if(!known)continue;
+   matched++;
+   const records=(grouped.get(e.id)||[]).map(l=>[
+     String(l.lot_number||''),stageById.get(l.stage_id)||'',String(l.frontage??''),String(l.area??''),String(l.title??''),l.price==null?null:Number(l.price),String(l.status||'Available'),String(l.orientation||''),String(l.street||''),Array.isArray(l.features)?l.features:[]
+   ]);
+   DB[key]=records;
+   window.LF_CLOUD_BOUNDARIES[key]={};
+   for(const l of (grouped.get(e.id)||[])){const b=l.boundary; if(Array.isArray(b)&&b.length>=3)window.LF_CLOUD_BOUNDARIES[key][String(l.lot_number)]=b; else if(b&&Array.isArray(b.points)&&b.points.length>=3)window.LF_CLOUD_BOUNDARIES[key][String(l.lot_number)]=b.points;}
+   count+=records.length;
+  }
+  if(matched===0){note('Cloud connected, but no estate keys match this kiosk (e.g. wal / alf / gow).');return;}
+  if(typeof currentKey!=='undefined' && currentKey && typeof buildOverlay==='function'){
+    const oldNumber=typeof selected!=='undefined'&&selected?String(selected[0]):null;
+    if(oldNumber){selected=(DB[currentKey]||[]).find(l=>String(l[0])===oldNumber)||null;}
+    buildOverlay();
+    if(selected&&typeof selectLot==='function')selectLot(selected);
+    else if(typeof renderPanel==='function')renderPanel();
+  }
+  note('Cloud lots: '+count+' loaded ('+matched+' matching estates).');
+ }catch(err){lastError=err.message||String(err);note('Cloud load failed — '+lastError+'; showing previous local data.');}
+ finally{busy=false;}
+}
+ document.getElementById('lfCloudRefresh').onclick=refreshCloud;
+ // Always refresh when the visitor opens an estate, including after an Admin price change elsewhere.
+ const originalOpen=window.openEstate;
+ window.openEstate=function(...args){originalOpen.apply(this,args);refreshCloud();};
+ window.addEventListener('DOMContentLoaded',refreshCloud);
+ if(document.readyState!=='loading')refreshCloud();
+})();
+</script>
+
+<!-- Cloud CRM pilot: server-backed visitor enquiries and authenticated Admin CRM. -->
+<style>
+#lfCrmCloud{background:#fff;padding:20px;border-radius:14px;margin:10px 0;color:#263131}
+#lfCrmCloud input,#lfCrmCloud select,#lfCrmCloud textarea{padding:10px;border:1px solid #bbb;border-radius:7px;max-width:100%;box-sizing:border-box}
+#lfCrmCloud table{width:100%;border-collapse:collapse;font-size:14px}#lfCrmCloud td,#lfCrmCloud th{padding:9px;border-bottom:1px solid #ddd;text-align:left}
+#lfCrmCloud .lf-error{color:#a32121}#lfCrmCloud .lf-ok{color:#17663b}
+#lfCrmCloud button{margin:4px;padding:10px 14px;cursor:pointer}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+(function(){
+'use strict';
+const URL='https://ajlbququbswnmzmbkiro.supabase.co';
+const KEY='sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43';
+const api=window.supabase?.createClient(URL,KEY,{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}});
+const $=id=>document.getElementById(id);
+const clean=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let cached=[], estateIds=new Map(),busy=false;
+async function req(p){const {data,error}=await p;if(error)throw error;return data;}
+async function findEstate(key){
+ if(estateIds.has(key))return estateIds.get(key);
+ const data=await req(api.from('estates').select('id').eq('estate_key',key).eq('active',true).limit(1));
+ if(!data.length)throw Error('Estate is not configured in Supabase: '+key);
+ estateIds.set(key,data[0].id);return data[0].id;
+}
+async function cloudSubmit(){
+ if(busy)return;
+ if(!api){alert('Cloud service unavailable. Please ask staff for assistance.');return;}
+ if(typeof selected==='undefined'||!selected)return;
+ const name=$('name').value.trim(),phone=$('phone').value.trim(),email=$('email').value.trim(),contact=$('contact').value,message=$('message').value.trim();
+ if(!name||!phone){alert('Please enter your name and mobile / phone number.');return;}
+ if(email&&!/^\S+@\S+\.\S+$/.test(email)){alert('Please enter a valid email address, or leave it blank.');return;}
+ const btn=document.querySelector('#enquiry button[onclick="submitEnquiry()"]');
+ busy=true;if(btn){btn.disabled=true;btn.textContent='Sending enquiry…';}
+ try{
+  const estate_id=await findEstate(currentKey),lotNumber=String(selected[0]);
+  const lots=await req(api.from('lots').select('id').eq('estate_id',estate_id).eq('lot_number',lotNumber).limit(1));
+  // Public RLS permits only the minimal enquiry fields; contact preference is included in message.
+  const note=(contact?'Preferred contact: '+contact+'\n':'')+message;
+  await req(api.from('enquiries').insert({estate_id,lot_id:lots[0]?.id||null,estate_name:currentEstate,lot_number:lotNumber,customer_name:name,email:email||null,phone,message:note}));
+  const sum=$('successSummary');if(sum)sum.innerHTML='<div class="kvgrid"><div><b>Estate</b><span>'+clean(currentEstate)+'</span></div><div><b>Lot</b><span>Lot '+clean(lotNumber)+'</span></div></div>';
+  show('enquirySuccess');
+  setTimeout(()=>{try{resetCustomerSession()}catch(e){}},90000);
+ }catch(e){console.error('Cloud enquiry failed',e);alert('Enquiry not sent. Supabase error: '+(e?.message||String(e))+(e?.code?' (code '+e.code+')':'')+'\n\nPlease copy this message for support. No enquiry has been confirmed.');}
+ finally{busy=false;if(btn){btn.disabled=false;btn.textContent='Send my enquiry';}}
+}
+window.submitEnquiry=cloudSubmit;
+function ui(){
+ const root=$('leadWorkspace');if(!root)return null;
+ const panel=root.querySelector('.lead-content');if(!panel)return null;
+ panel.innerHTML='<div id="lfCrmCloud"><h3>Cloud enquiries</h3><p>Sign in with your Supabase Admin account to view enquiries from all kiosks.</p><div id="lfCrmLogin"><input id="lfCrmEmail" type="email" placeholder="Admin email" autocomplete="username"> <input id="lfCrmPassword" type="password" placeholder="Password" autocomplete="current-password"> <button id="lfCrmSignIn">Sign in</button></div><div id="lfCrmActions" hidden><button id="lfCrmReload">Refresh enquiries</button> <button id="lfCrmSignOut">Sign out</button></div><p id="lfCrmMessage" role="status"></p><div id="lfCrmRecords"></div></div>';
+ $('lfCrmSignIn').onclick=async()=>{try{message('Signing in…');await req(api.auth.signInWithPassword({email:$('lfCrmEmail').value.trim(),password:$('lfCrmPassword').value}));$('lfCrmPassword').value='';await load();}catch(e){message('Sign-in failed: '+e.message,true);}};
+ $('lfCrmReload').onclick=load;
+ $('lfCrmSignOut').onclick=async()=>{await api.auth.signOut();$('lfCrmRecords').replaceChildren();$('lfCrmActions').hidden=true;$('lfCrmLogin').hidden=false;message('Signed out.');};
+ return panel;
+}
+function message(t,error=false){const x=$('lfCrmMessage');if(x){x.textContent=t;x.className=error?'lf-error':'lf-ok';}}
+async function load(){
+ try{
+  if(!api)throw Error('Supabase JavaScript library could not load.');
+  const {data:{user}}=await api.auth.getUser();if(!user)throw Error('Sign in first.');
+  $('lfCrmActions').hidden=false;$('lfCrmLogin').hidden=true;message('Loading enquiries…');
+  cached=await req(api.from('enquiries').select('id,created_at,estate_name,lot_number,customer_name,phone,email,message,status,salesperson,follow_up_date,admin_notes').order('created_at',{ascending:false}).limit(500));
+  render();message(cached.length+' enquiries loaded from Supabase.');
+ }catch(e){message('Could not load enquiries: '+e.message,true);}
+}
+function render(){
+ const el=$('lfCrmRecords');if(!el)return;
+ if(!cached.length){el.textContent='No cloud enquiries yet.';return;}
+ el.innerHTML='<div style="overflow-x:auto"><table><thead><tr><th>Received</th><th>Estate / lot</th><th>Customer</th><th>Contact</th><th>Status</th><th>Follow-up</th><th>Action</th></tr></thead><tbody>'+cached.map((l,i)=>'<tr><td>'+clean(new Date(l.created_at).toLocaleString('en-AU'))+'</td><td>'+clean(l.estate_name)+' / '+clean(l.lot_number)+'</td><td>'+clean(l.customer_name)+'</td><td>'+clean(l.phone)+'<div>'+clean(l.email)+'</div></td><td><select data-i="'+i+'" data-field="status"><option>'+clean(l.status||'NEW')+'</option>'+['NEW','CONTACTED','FOLLOW-UP','CLOSED'].filter(x=>x!==l.status).map(x=>'<option>'+x+'</option>').join('')+'</select></td><td><input type="date" data-i="'+i+'" data-field="follow_up_date" value="'+clean(l.follow_up_date||'')+'"></td><td><button data-save="'+i+'">Save</button><button data-detail="'+i+'">Details</button></td></tr>').join('')+'</tbody></table></div><div id="lfCrmDetail"></div>';
+ el.querySelectorAll('[data-save]').forEach(b=>b.onclick=()=>saveRow(Number(b.dataset.save)));
+ el.querySelectorAll('[data-detail]').forEach(b=>b.onclick=()=>detail(Number(b.dataset.detail)));
+}
+async function saveRow(i){
+ const l=cached[i],el=$('lfCrmRecords');const status=el.querySelector('[data-i="'+i+'"][data-field="status"]').value,follow_up_date=el.querySelector('[data-i="'+i+'"][data-field="follow_up_date"]').value||null;
+ try{message('Saving…');await req(api.from('enquiries').update({status,follow_up_date}).eq('id',l.id).select('id').single());await load();message('Enquiry updated in Supabase.');}catch(e){message('Save failed: '+e.message,true);}
+}
+function detail(i){
+ const l=cached[i],d=$('lfCrmDetail');d.replaceChildren();
+ const h=document.createElement('h4');h.textContent=l.customer_name+' — '+l.estate_name+' Lot '+l.lot_number;d.append(h);
+ const msg=document.createElement('p');msg.textContent=l.message||'No message';d.append(msg);
+ const label=document.createElement('label');label.textContent='Internal notes';d.append(label);
+ const notes=document.createElement('textarea');notes.rows=3;notes.style.width='100%';notes.value=l.admin_notes||'';d.append(notes);
+ const sales=document.createElement('input');sales.placeholder='Assigned salesperson';sales.value=l.salesperson||'';d.append(sales);
+ const btn=document.createElement('button');btn.textContent='Save notes and assignment';d.append(btn);
+ btn.onclick=async()=>{try{message('Saving notes…');await req(api.from('enquiries').update({admin_notes:notes.value,salesperson:sales.value}).eq('id',l.id).select('id').single());await load();message('Notes saved.');}catch(e){message('Save failed: '+e.message,true);}};
+}
+window.openLeadManagement=function(){const modal=$('leadWorkspace');modal.classList.remove('hidden');ui();api?.auth.getUser().then(({data})=>{if(data?.user)load();});};
+})();
+</script>
+<!-- Cloud Lot Management integration: Supabase is the only source for Admin inventory edits. -->
+<style>
+#lotManager .lot-manager-panel{width:min(1150px,96vw);max-width:1150px}#lfCloudLotApp{padding:14px;color:#263131}#lfCloudLotApp input,#lfCloudLotApp select,#lfCloudLotApp textarea{padding:9px;border:1px solid #b8c1bd;border-radius:7px;max-width:100%;box-sizing:border-box}#lfCloudLotApp button{padding:9px 13px;border-radius:7px;border:1px solid #a7b1ab;cursor:pointer;margin:3px}#lfCloudLotApp .cloud-primary{background:#244c3e;color:white}#lfCloudLotApp .cloud-danger{color:#a32121}#lfCloudLotApp .cloud-row{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0}#lfCloudLotApp label{display:grid;gap:5px;flex:1;min-width:140px;font-size:13px}#lfCloudLotApp table{width:100%;border-collapse:collapse;font-size:13px}#lfCloudLotApp td,#lfCloudLotApp th{padding:8px;border-bottom:1px solid #ddd;text-align:left}#lfCloudLotApp .cloud-scroll{overflow:auto;max-height:45vh}#lfCloudLotApp .cloud-message{white-space:pre-wrap;padding:10px;background:#edf4ef;border-radius:7px;margin:8px 0}#lfCloudLotApp .cloud-error{background:#ffebeb;color:#922}#lfCloudLotApp .cloud-editor{background:#f5f7f5;padding:14px;border-radius:10px;margin:12px 0}#lfCloudLotApp .cloud-note{font-size:12px;color:#555}
+</style>
+<script>
+(function(){
+'use strict';
+const api=window.supabase?.createClient('https://ajlbququbswnmzmbkiro.supabase.co','sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43',{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}});
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let estates=[],stages=[],lots=[],editing=null,loaded=false,loading=false;
+async function req(p){const {data,error}=await p;if(error)throw error;return data;}
+function message(t,error=false){const el=$('lfCloudLotMsg');if(el){el.textContent=t;el.className='cloud-message'+(error?' cloud-error':'');}}
+function root(){return $('lfCloudLotApp');}
+function template(){const el=$('lotManagerBody');if(!el)return;el.innerHTML=`<div id="lfCloudLotApp"><p><b>Server Lot Management</b> — changes save directly to Supabase and appear on connected kiosks after refresh.</p><div id="lfCloudLotLogin"><div class="cloud-row"><label>Admin email<input id="lfCloudLotEmail" type="email" autocomplete="username"></label><label>Password<input id="lfCloudLotPassword" type="password" autocomplete="current-password"></label><button id="lfCloudLotSignIn" class="cloud-primary">Sign in</button></div></div><div id="lfCloudLotWorkspace" hidden><div class="cloud-row"><button id="lfCloudLotReload">Refresh from server</button><button id="lfCloudLotNew" class="cloud-primary">+ Add lot</button><button id="lfCloudLotSignOut">Sign out</button></div><div class="cloud-row"><label>Estate<select id="lfCloudLotFilter"><option value="all">All estates</option></select></label><label>Search lots<input id="lfCloudLotSearch" placeholder="Lot number or stage"></label></div><div id="lfCloudLotEditor"></div><div id="lfCloudLotTable" class="cloud-scroll"></div><p class="cloud-note">The older local-only lot editor is disabled in this test version to prevent accidental unsynchronised changes. Estate/masterplan editing is not yet cloud-connected.</p></div><div id="lfCloudLotMsg" class="cloud-message" role="status">Sign in to manage server lots.</div></div>`;
+$('lfCloudLotSignIn').onclick=signIn;$('lfCloudLotReload').onclick=load;$('lfCloudLotNew').onclick=()=>editor(null);$('lfCloudLotSignOut').onclick=signOut;$('lfCloudLotFilter').onchange=render;$('lfCloudLotSearch').oninput=render;
+}
+async function signIn(){try{if(!api)throw Error('Supabase library failed to load.');message('Signing in…');await req(api.auth.signInWithPassword({email:$('lfCloudLotEmail').value.trim(),password:$('lfCloudLotPassword').value}));$('lfCloudLotPassword').value='';await load();}catch(e){message('Sign-in failed: '+e.message,true);}}
+async function signOut(){await api?.auth.signOut();loaded=false;template();message('Signed out.');}
+async function load(){if(loading)return;loading=true;try{if(!api)throw Error('Supabase library unavailable');const {data:{user}}=await api.auth.getUser();if(!user)throw Error('Please sign in first.');message('Loading lots from server…');[estates,stages,lots]=await Promise.all([req(api.from('estates').select('id,name,estate_key').order('name')),req(api.from('stages').select('id,estate_id,name').order('name')),req(api.from('lots').select('id,estate_id,stage_id,lot_number,frontage,area,title,price,status,orientation,street,features,notes').order('lot_number').limit(2000))]);loaded=true;$('lfCloudLotLogin').hidden=true;$('lfCloudLotWorkspace').hidden=false;const filter=$('lfCloudLotFilter'),prior=filter.value;filter.innerHTML='<option value="all">All estates</option>'+estates.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');filter.value=estates.some(e=>e.id===prior)?prior:'all';render();message('Connected. '+lots.length+' lots loaded from Supabase.');}catch(e){message('Unable to load: '+e.message,true);}finally{loading=false;}}
+function render(){if(!loaded)return;const f=$('lfCloudLotFilter').value,q=$('lfCloudLotSearch').value.toLowerCase().trim();const rows=lots.filter(l=>(f==='all'||l.estate_id===f)&&(!q||String(l.lot_number).toLowerCase().includes(q)||String(stages.find(s=>s.id===l.stage_id)?.name||'').toLowerCase().includes(q)));$('lfCloudLotTable').innerHTML='<table><thead><tr><th>Estate</th><th>Stage</th><th>Lot</th><th>Area</th><th>Price</th><th>Status</th><th>Action</th></tr></thead><tbody>'+rows.map(l=>`<tr><td>${esc(estates.find(e=>e.id===l.estate_id)?.name)}</td><td>${esc(stages.find(s=>s.id===l.stage_id)?.name)}</td><td>${esc(l.lot_number)}</td><td>${esc(l.area)}</td><td>${l.price==null?'POA':'$'+Number(l.price).toLocaleString('en-AU')}</td><td>${esc(l.status)}</td><td><button data-edit="${esc(l.id)}">Edit</button></td></tr>`).join('')+'</tbody></table>';$('lfCloudLotTable').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>editor(lots.find(l=>l.id===b.dataset.edit)));}
+function editor(l){editing=l?.id||null;const e=$('lfCloudLotEditor');const currentEstate=l?.estate_id||($('lfCloudLotFilter').value==='all'?estates[0]?.id:$('lfCloudLotFilter').value);if(!estates.length){message('Add an estate in Supabase before adding lots.',true);return;}e.innerHTML=`<div class="cloud-editor"><h3>${l?'Edit':'Add'} server lot</h3><div class="cloud-row"><label>Estate<select id="clEstate">${estates.map(x=>`<option value="${esc(x.id)}" ${x.id===currentEstate?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label>Stage<select id="clStage"></select></label><label>Lot number<input id="clNumber" value="${esc(l?.lot_number)}" required></label></div><div class="cloud-row"><label>Frontage<input id="clFrontage" value="${esc(l?.frontage)}"></label><label>Area<input id="clArea" value="${esc(l?.area)}"></label><label>Title / registration<input id="clTitle" value="${esc(l?.title)}"></label></div><div class="cloud-row"><label>Price AUD<input id="clPrice" type="number" min="0" step="0.01" value="${l?.price??''}"></label><label>Status<select id="clStatus">${['Available','Hold','On Hold','Sold','Off Market'].map(s=>`<option ${s===(l?.status||'Available')?'selected':''}>${s}</option>`).join('')}</select></label><label>Orientation<input id="clOrientation" value="${esc(l?.orientation)}"></label></div><div class="cloud-row"><label>Street<input id="clStreet" value="${esc(l?.street)}"></label><label>Features (comma separated)<input id="clFeatures" value="${esc((l?.features||[]).join(', '))}"></label></div><label>Notes<textarea id="clNotes" rows="2">${esc(l?.notes)}</textarea></label><div class="cloud-row"><button id="clSave" class="cloud-primary">Save to Supabase</button><button id="clCancel">Cancel</button>${l?'<button id="clDelete" class="cloud-danger">Delete lot</button>':''}</div></div>`;function stageOptions(){const options=stages.filter(s=>s.estate_id===$('clEstate').value);$('clStage').innerHTML='<option value="">No stage</option>'+options.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');if(l?.stage_id&&options.some(s=>s.id===l.stage_id))$('clStage').value=l.stage_id;}$('clEstate').onchange=()=>{stageOptions();$('clStage').value='';};stageOptions();$('clSave').onclick=save;$('clCancel').onclick=()=>e.replaceChildren();if(l)$('clDelete').onclick=remove;}
+async function save(){try{const number=$('clNumber').value.trim(),p=$('clPrice').value;if(!number)throw Error('Enter a lot number.');if(p!==''&&(!Number.isFinite(Number(p))||Number(p)<0))throw Error('Invalid price.');const payload={estate_id:$('clEstate').value,stage_id:$('clStage').value||null,lot_number:number,frontage:$('clFrontage').value.trim(),area:$('clArea').value.trim(),title:$('clTitle').value.trim(),price:p===''?null:Number(p),status:$('clStatus').value,orientation:$('clOrientation').value.trim(),street:$('clStreet').value.trim(),features:$('clFeatures').value.split(',').map(s=>s.trim()).filter(Boolean),notes:$('clNotes').value};const conflict=lots.some(l=>l.id!==editing&&l.estate_id===payload.estate_id&&String(l.lot_number).trim().toLowerCase()===number.toLowerCase());if(conflict)throw Error('A lot with that number already exists in this estate.');$('clSave').disabled=true;message('Saving to Supabase…');if(editing)await req(api.from('lots').update(payload).eq('id',editing).select('id').single());else await req(api.from('lots').insert(payload).select('id').single());$('lfCloudLotEditor').replaceChildren();await load();message('Lot saved to Supabase. Refresh the visitor kiosk to see changes.');}catch(e){message('Save failed: '+e.message,true);if($('clSave'))$('clSave').disabled=false;}}
+async function remove(){const l=lots.find(x=>x.id===editing);if(!l||!confirm('Permanently delete Lot '+l.lot_number+' from Supabase? This cannot be undone.'))return;try{message('Deleting…');await req(api.from('lots').delete().eq('id',l.id).select('id').single());$('lfCloudLotEditor').replaceChildren();await load();message('Lot deleted from Supabase.');}catch(e){message('Delete failed: '+e.message,true);}}
+const oldOpen=window.openLotManagement;
+window.openLotManagement=function(preselect=-1){if(typeof oldOpen==='function')oldOpen(preselect);template();api?.auth.getUser().then(({data})=>{if(data?.user)load();});};
+})();
+</script>
+
+<!-- Land Finder cloud estate/stage management pilot. No local estate editor writes. -->
+<style>
+#admin>.admin-grid,#admin>#estateEditor,#admin>#estateWorkspace{display:none!important}
+#admin .topbar .admin-actions button[onclick="openEstateEditor()"]{display:none!important}
+#lfEstateCloud{margin:16px auto;max-width:1200px;padding:20px;background:#fff;color:#24352d;border-radius:14px}
+#lfEstateCloud input,#lfEstateCloud select,#lfEstateCloud textarea{box-sizing:border-box;padding:10px;border:1px solid #aab5af;border-radius:6px;width:100%;font:inherit}
+#lfEstateCloud label{display:block;font-size:13px;margin:8px 0;min-width:150px;flex:1}
+#lfEstateCloud button{padding:10px 14px;margin:4px;border:1px solid #9baea4;border-radius:7px;cursor:pointer}
+#lfEstateCloud .lfrow{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+#lfEstateCloud .lfprimary{background:#244c3e;color:#fff}
+#lfEstateCloud .lfnote{padding:10px;background:#f0f4f1;border-radius:7px;white-space:pre-wrap;margin:10px 0}
+#lfEstateCloud .lferr{background:#fff0f0;color:#9a2222}
+#lfEstateCloud .lfitem{border:1px solid #d3dbd6;padding:12px;border-radius:8px;margin:9px 0}
+</style>
+<script>
+(function(){
+'use strict';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api=window.supabase?.createClient('https://ajlbququbswnmzmbkiro.supabase.co','sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43',{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}});
+let estates=[],stages=[],plans=[],selected=null,working=false;
+async function req(p){const {data,error}=await p;if(error)throw error;return data;}
+function msg(s,err=false){$('lfEstateMsg').textContent=s;$('lfEstateMsg').className='lfnote'+(err?' lferr':'');}
+function init(){const admin=$('admin');if(!admin)return;const box=document.createElement('div');box.id='lfEstateCloud';box.innerHTML=`<h2>Cloud Estate Management</h2><p>Manage estates and stages on Supabase. This replaces the older local-only estate editor in this test.</p><div id="lfEstateLogin" class="lfrow"><label>Admin email<input id="lfEstateEmail" type="email" autocomplete="username"></label><label>Password<input id="lfEstatePass" type="password" autocomplete="current-password"></label><button id="lfEstateSign" class="lfprimary">Sign in</button></div><div id="lfEstateWork" hidden><div class="lfrow"><button id="lfEstateReload">Refresh estates</button><button id="lfEstateNew" class="lfprimary">+ Add estate</button></div><div id="lfEstateList"></div><div id="lfEstateEditor"></div></div><div id="lfEstateMsg" class="lfnote" role="status">Sign in to manage server estates.</div><p style="font-size:12px">Masterplan URLs are stored in Supabase; uploading image files to Supabase Storage and automatically displaying newly added estates on the visitor kiosk are not yet enabled. Existing masterplan images remain untouched. Do not use the old local editor for server changes.</p>`;admin.insertBefore(box,admin.querySelector('.admin-grid'));$('lfEstateSign').onclick=signIn;$('lfEstateReload').onclick=load;$('lfEstateNew').onclick=()=>editor(null);api?.auth.getUser().then(({data})=>{if(data?.user)load();});}
+async function signIn(){try{if(!api)throw Error('Supabase library unavailable');msg('Signing in…');await req(api.auth.signInWithPassword({email:$('lfEstateEmail').value.trim(),password:$('lfEstatePass').value}));$('lfEstatePass').value='';await load();}catch(e){msg('Sign in failed: '+e.message,true);}}
+async function load(){if(working)return;working=true;try{const {data:{user}}=await api.auth.getUser();if(!user)throw Error('Please sign in first.');msg('Loading estates…');[estates,stages,plans]=await Promise.all([req(api.from('estates').select('id,name,estate_key,developer,suburb,state,address,description,active').order('name')),req(api.from('stages').select('id,estate_id,name,sort_order').order('sort_order')),req(api.from('masterplans').select('id,estate_id,title,image_url,is_primary,sort_order'))]);$('lfEstateLogin').hidden=true;$('lfEstateWork').hidden=false;render();msg(estates.length+' estate(s) loaded from Supabase.');}catch(e){msg('Load failed: '+e.message,true);}finally{working=false;}}
+function render(){$('lfEstateList').innerHTML=estates.length?estates.map(e=>`<div class="lfitem"><b>${esc(e.name)}</b> <small>(${esc(e.estate_key)}) · ${e.active?'Visible':'Hidden'} · ${stages.filter(s=>s.estate_id===e.id).length} stage(s)</small> <button data-estate="${esc(e.id)}">Edit estate / stages</button></div>`).join(''):'No server estates yet.';$('lfEstateList').querySelectorAll('[data-estate]').forEach(b=>b.onclick=()=>editor(estates.find(e=>e.id===b.dataset.estate)));}
+function editor(e){selected=e?.id||null;const ed=$('lfEstateEditor'),ss=stages.filter(s=>s.estate_id===selected),pp=plans.find(p=>p.estate_id===selected&&p.is_primary)||plans.find(p=>p.estate_id===selected);ed.innerHTML=`<div class="lfitem"><h3>${e?'Edit estate':'Add estate'}</h3><div class="lfrow"><label>Name<input id="lfEN" value="${esc(e?.name)}"></label><label>Estate key<input id="lfEK" value="${esc(e?.estate_key)}" ${e?'readonly':''} placeholder="e.g. riverview"></label><label>Developer<input id="lfED" value="${esc(e?.developer)}"></label></div><div class="lfrow"><label>Suburb<input id="lfES" value="${esc(e?.suburb)}"></label><label>State<input id="lfEST" value="${esc(e?.state||'QLD')}"></label><label>Address<input id="lfEA" value="${esc(e?.address)}"></label></div><label>Description<textarea id="lfEDesc">${esc(e?.description)}</textarea></label><label><input type="checkbox" id="lfEActive" ${e?.active!==false?'checked':''} style="width:auto"> Active estate</label><button id="lfESave" class="lfprimary">Save estate to Supabase</button><button id="lfECancel">Close editor</button>${e?`<h3>Stages</h3><div id="lfStageList">${ss.map(s=>`<div class="lfrow"><label>Stage name<input data-stage-name="${esc(s.id)}" value="${esc(s.name)}"></label><button data-stage-save="${esc(s.id)}">Save</button><button data-stage-delete="${esc(s.id)}">Delete</button></div>`).join('')}</div><div class="lfrow"><label>New stage name<input id="lfStageNew" placeholder="Stage 1"></label><button id="lfStageAdd">+ Add stage</button></div><h3>Primary masterplan link</h3><p style="font-size:12px">Enter an existing publicly accessible image URL. This saves its reference only; it does not upload a file or replace the visitor map yet.</p><label>Image URL<input id="lfPlanURL" type="url" value="${esc(pp?.image_url)}" placeholder="https://..."></label><button id="lfPlanSave">Save masterplan link</button>`:''}</div>`;
+$('lfESave').onclick=saveEstate;$('lfECancel').onclick=()=>ed.replaceChildren();if(e){ed.querySelectorAll('[data-stage-save]').forEach(b=>b.onclick=()=>saveStage(b.dataset.stageSave));ed.querySelectorAll('[data-stage-delete]').forEach(b=>b.onclick=()=>deleteStage(b.dataset.stageDelete));$('lfStageAdd').onclick=addStage;$('lfPlanSave').onclick=savePlan;}}
+async function saveEstate(){try{const name=$('lfEN').value.trim(),key=$('lfEK').value.trim().toLowerCase();if(!name||!key)throw Error('Name and estate key are required.');if(!/^[a-z0-9_-]+$/.test(key))throw Error('Estate key must use lowercase letters, digits, hyphens or underscores.');if(estates.some(e=>e.id!==selected&&e.estate_key===key))throw Error('Estate key already in use.');const payload={name,estate_key:key,developer:$('lfED').value.trim(),suburb:$('lfES').value.trim(),state:$('lfEST').value.trim(),address:$('lfEA').value.trim(),description:$('lfEDesc').value.trim(),active:$('lfEActive').checked};$('lfESave').disabled=true;msg('Saving estate…');if(selected)await req(api.from('estates').update(payload).eq('id',selected).select('id').single());else await req(api.from('estates').insert(payload).select('id').single());$('lfEstateEditor').replaceChildren();await load();msg('Estate saved to Supabase.');}catch(e){msg('Estate save failed: '+e.message,true);if($('lfESave'))$('lfESave').disabled=false;}}
+async function saveStage(id){try{const name=document.querySelector('[data-stage-name="'+id+'"]')?.value.trim();if(!name)throw Error('Stage name is required.');await req(api.from('stages').update({name}).eq('id',id).select('id').single());await reloadEditor('Stage saved.');}catch(e){msg('Stage save failed: '+e.message,true);}}
+async function addStage(){try{const name=$('lfStageNew').value.trim();if(!name)throw Error('Enter a stage name.');await req(api.from('stages').insert({estate_id:selected,name,sort_order:stages.filter(s=>s.estate_id===selected).length}).select('id').single());await reloadEditor('Stage added.');}catch(e){msg('Stage add failed: '+e.message,true);}}
+async function deleteStage(id){if(!confirm('Delete this stage? Lots assigned to it may prevent deletion.'))return;try{await req(api.from('stages').delete().eq('id',id).select('id').single());await reloadEditor('Stage deleted.');}catch(e){msg('Stage delete failed: '+e.message,true);}}
+async function savePlan(){try{const url=$('lfPlanURL').value.trim();if(!url||!/^https:\/\//i.test(url))throw Error('Enter a full HTTPS image URL.');const old=plans.find(p=>p.estate_id===selected&&p.is_primary)||plans.find(p=>p.estate_id===selected);const payload={estate_id:selected,title:'Primary masterplan',image_url:url,is_primary:true,sort_order:0};if(old)await req(api.from('masterplans').update(payload).eq('id',old.id).select('id').single());else await req(api.from('masterplans').insert(payload).select('id').single());await reloadEditor('Masterplan link saved. Kiosk image integration is still pending.');}catch(e){msg('Masterplan save failed: '+e.message,true);}}
+async function reloadEditor(note){const id=selected;await load();editor(estates.find(e=>e.id===id));msg(note);}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+</script>
+<!-- Walermare masterplan cloud display test: preserves embedded maps as fallback. -->
+<style>
+#lfMapCloudNotice{position:fixed;left:12px;bottom:12px;z-index:99990;background:#26332d;color:#fff;padding:9px 12px;border-radius:9px;font:12px Arial,sans-serif;max-width:350px;box-shadow:0 3px 12px #0003}
+#lfMapCloudNotice button{margin-left:8px;border:1px solid #fff8;background:transparent;color:#fff;border-radius:5px;padding:4px 7px;cursor:pointer}
+</style>
+<div id="lfMapCloudNotice" role="status" hidden><span id="lfMapCloudText"></span><button id="lfMapCloudRetry" type="button">Retry</button></div>
+<script>
+(function(){
+'use strict';
+const ROOT='https://ajlbququbswnmzmbkiro.supabase.co/rest/v1/';
+const KEY='sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43';
+const notice=document.getElementById('lfMapCloudNotice');
+const message=document.getElementById('lfMapCloudText');
+const originalOpen=window.openEstate;
+let generation=0;
+function report(text){message.textContent=text;notice.hidden=false;}
+async function read(table,query){
+ const r=await fetch(ROOT+table+'?'+query,{headers:{apikey:KEY,Authorization:'Bearer '+KEY,Accept:'application/json'},cache:'no-store'});
+ if(!r.ok)throw Error(table+' '+r.status+': '+(await r.text()).slice(0,160));
+ return r.json();
+}
+async function applyCloudMasterplan(){
+ const token=++generation;
+ const key=String(typeof currentKey==='undefined'?'':currentKey);
+ // Scope this first integration to Walermare. Other embedded maps remain untouched.
+ if(key!=='wal'){notice.hidden=true;return;}
+ report('Walermare masterplan: checking Supabase…');
+ try{
+  const estates=await read('estates','select=id,estate_key&estate_key=eq.wal&active=eq.true&limit=1');
+  if(token!==generation)return;
+  if(!estates.length){report('Walermare cloud estate not found; existing masterplan retained.');return;}
+  const plans=await read('masterplans','select=image_url,is_primary,sort_order&estate_id=eq.'+encodeURIComponent(estates[0].id)+'&order=is_primary.desc,sort_order.asc&limit=1');
+  if(token!==generation)return;
+  const url=plans[0]?.image_url;
+  if(!url||!/^https:\/\//i.test(url)){report('No cloud masterplan URL found; existing image retained.');return;}
+  const img=new Image();
+  img.onload=()=>{
+   if(token!==generation||(typeof currentKey==='undefined'||currentKey!=='wal'))return;
+   const target=document.getElementById('masterImage');
+   if(!target)return;
+   target.src=url;
+   // Existing polygon coordinates were traced on the original artwork.
+   // Do not silently claim that they align with a different cloud image.
+   report('Walermare cloud masterplan loaded ('+img.naturalWidth+' × '+img.naturalHeight+'). Check lot boundary alignment before use.');
+  };
+  img.onerror=()=>{if(token===generation)report('Cloud image failed to load; existing masterplan retained. Check the public URL.');};
+  img.src=url;
+ }catch(e){if(token===generation)report('Masterplan check failed; existing image retained: '+(e.message||e));}
+}
+window.openEstate=function(...args){
+ const result=originalOpen.apply(this,args);
+ applyCloudMasterplan();
+ return result;
+};
+document.getElementById('lfMapCloudRetry').addEventListener('click',applyCloudMasterplan);
+})();
+</script>
+<!-- Cloud boundary editor: uses the existing lots.boundary JSON column. -->
+<style>
+#lfBoundaryCloud{background:#fff;border-radius:14px;padding:20px;margin:16px auto;max-width:1200px;color:#24352d}
+#lfBoundaryCloud button,#lfBoundaryCloud select,#lfBoundaryCloud input{padding:10px;border:1px solid #bbc7c0;border-radius:7px;font:inherit}
+#lfBoundaryCloud button{cursor:pointer;margin:4px}#lfBoundaryCloud .lf-b-primary{background:#244c3e;color:white}
+#lfBoundaryCanvas{position:relative;background:#26332d;max-width:100%;margin:14px 0;overflow:hidden;touch-action:none}
+#lfBoundaryCanvas svg{display:block;width:100%;height:auto;max-height:65vh;touch-action:none;cursor:crosshair}
+#lfBoundaryMessage{white-space:pre-wrap;padding:10px;background:#f0f4f1;border-radius:7px;margin:10px 0}
+#lfBoundaryCanvas .saved{fill:#339a5540;stroke:#37b35a;stroke-width:3;vector-effect:non-scaling-stroke}
+#lfBoundaryCanvas .draft{fill:#f1bc3d44;stroke:#ffd050;stroke-width:3;vector-effect:non-scaling-stroke}
+#lfBoundaryCanvas .vertex{fill:white;stroke:#26332d;stroke-width:2;vector-effect:non-scaling-stroke;cursor:grab}
+</style>
+<script>
+(function(){'use strict';
+const url='https://ajlbququbswnmzmbkiro.supabase.co',key='sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43';
+const api=window.supabase?.createClient(url,key,{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}});
+const $=id=>document.getElementById(id);
+let estates=[],lots=[],plans=[],chosen=null,points=[],width=1500,height=1000,undo=[],busy=false;
+function msg(t,error=false){const el=$('lfBoundaryMessage');if(el){el.textContent=t;el.style.color=error?'#a32121':'#24352d';}}
+function clean(p){if(Array.isArray(p))return p;if(p&&Array.isArray(p.points))return p.points;return [];}
+function esc(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function req(p){const {data,error}=await p;if(error)throw error;return data;}
+function init(){const admin=$('admin');if(!admin)return;const box=document.createElement('section');box.id='lfBoundaryCloud';box.innerHTML=`<h2>Cloud Map / Boundary Editor</h2><p>Draw lot boundaries on the Supabase masterplan. Boundaries save directly to the cloud lot record and display on visitor kiosks after refresh.</p><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><label>Estate <select id="lfBoundaryEstate"></select></label><label>Lot <select id="lfBoundaryLot"></select></label><button id="lfBoundaryLoad">Load / Refresh</button><button id="lfBoundaryLogin">Sign in</button></div><div id="lfBoundaryCredentials" style="display:none"><input id="lfBoundaryEmail" type="email" placeholder="Admin email" autocomplete="username"><input id="lfBoundaryPassword" type="password" placeholder="Password" autocomplete="current-password"><button id="lfBoundaryDoLogin">Sign in securely</button></div><div id="lfBoundaryMessage">Sign in, then load an estate to begin.</div><div id="lfBoundaryCanvas" style="display:none"><svg id="lfBoundarySVG" viewBox="0 0 1500 1000" preserveAspectRatio="xMidYMid meet"><image id="lfBoundaryImage" x="0" y="0" width="1500" height="1000" preserveAspectRatio="none"/><g id="lfBoundaryShapes"></g></svg></div><div id="lfBoundaryTools" style="display:none"><button id="lfBoundaryNew">Draw new boundary</button><button id="lfBoundaryUndo">Undo last point</button><button id="lfBoundarySave" class="lf-b-primary">Save boundary to Supabase</button><button id="lfBoundaryDelete">Clear saved boundary</button><p style="font-size:13px">To draw: click the corners of the selected lot in order, then Save. To adjust: drag a white corner point. Draw at least three corners. Other saved lots appear in green.</p></div>`;admin.appendChild(box);
+$('lfBoundaryLogin').onclick=()=>{$('lfBoundaryCredentials').style.display=$('lfBoundaryCredentials').style.display==='none'?'block':'none';};
+$('lfBoundaryDoLogin').onclick=async()=>{try{await req(api.auth.signInWithPassword({email:$('lfBoundaryEmail').value.trim(),password:$('lfBoundaryPassword').value}));$('lfBoundaryPassword').value='';$('lfBoundaryCredentials').style.display='none';await load();}catch(e){msg('Sign in failed: '+e.message,true);}};
+$('lfBoundaryLoad').onclick=load;$('lfBoundaryEstate').onchange=()=>{chosen=null;renderLots();loadImage();};$('lfBoundaryLot').onchange=selectLot;
+$('lfBoundaryNew').onclick=()=>{undo=[];points=[];draw();msg('Click each corner of the lot on the masterplan, then Save.');};
+$('lfBoundaryUndo').onclick=()=>{if(points.length)points.pop();draw();};
+$('lfBoundarySave').onclick=save;
+$('lfBoundaryDelete').onclick=async()=>{if(!chosen||!confirm('Clear the saved boundary for Lot '+chosen.lot_number+'?'))return;points=[];await save();};
+api?.auth.getUser().then(({data})=>{if(data?.user)load();});
+}
+async function load(){if(busy)return;busy=true;try{if(!api)throw Error('Supabase library unavailable.');const {data:{user}}=await api.auth.getUser();if(!user)throw Error('Sign in to Cloud Map / Boundary Editor first.');msg('Loading estates, lots and masterplans…');const estate=$('lfBoundaryEstate').value,previousLotId=$('lfBoundaryLot').value;[estates,lots,plans]=await Promise.all([req(api.from('estates').select('id,estate_key,name').order('name')),req(api.from('lots').select('id,estate_id,lot_number,status,boundary').order('lot_number')),req(api.from('masterplans').select('estate_id,image_url,is_primary,sort_order'))]);$('lfBoundaryEstate').innerHTML=estates.map(e=>`<option value="${esc(e.id)}">${esc(e.name)} (${esc(e.estate_key)})</option>`).join('');$('lfBoundaryEstate').value=estates.some(e=>e.id===estate)?estate:(estates.find(e=>e.estate_key==='wal')?.id||estates[0]?.id||'');renderLots();if(lots.some(l=>l.id===previousLotId&&l.estate_id===$('lfBoundaryEstate').value)){$('lfBoundaryLot').value=previousLotId;selectLot();}loadImage();msg('Cloud data loaded. Select a lot and draw its boundary.');}catch(e){msg('Could not load: '+e.message,true);}finally{busy=false;}}
+function renderLots(){const estate=$('lfBoundaryEstate').value,matching=lots.filter(l=>l.estate_id===estate);$('lfBoundaryLot').innerHTML=matching.map(l=>`<option value="${esc(l.id)}">Lot ${esc(l.lot_number)} — ${esc(l.status)}${clean(l.boundary).length?' ✓':''}</option>`).join('');selectLot();}
+function selectLot(){chosen=lots.find(l=>l.id===$('lfBoundaryLot').value)||null;points=chosen?clean(chosen.boundary).map(p=>[Number(p[0]),Number(p[1])]):[];undo=[];draw();}
+function loadImage(){const estate=$('lfBoundaryEstate').value;const plan=plans.filter(p=>p.estate_id===estate).sort((a,b)=>Number(!!b.is_primary)-Number(!!a.is_primary)||Number(a.sort_order||0)-Number(b.sort_order||0))[0];$('lfBoundaryCanvas').style.display='none';$('lfBoundaryTools').style.display='none';if(!plan?.image_url){msg('This estate needs a saved cloud Masterplan Image URL in Estate Management.',true);return;}const im=new Image();im.onload=()=>{width=im.naturalWidth;height=im.naturalHeight;const svg=$('lfBoundarySVG');svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.style.aspectRatio=width+'/'+height;const el=$('lfBoundaryImage');el.setAttribute('width',width);el.setAttribute('height',height);el.setAttribute('href',plan.image_url);$('lfBoundaryCanvas').style.display='block';$('lfBoundaryTools').style.display='block';draw();msg('Masterplan loaded ('+width+' × '+height+'). Choose a lot to draw its outline.');};im.onerror=()=>msg('Masterplan image failed to load. Check the saved public URL.',true);im.src=plan.image_url;}
+function draw(){const g=$('lfBoundaryShapes');if(!g)return;g.replaceChildren();const estate=$('lfBoundaryEstate')?.value;for(const l of lots.filter(l=>l.estate_id===estate&&l.id!==chosen?.id)){const b=clean(l.boundary);if(b.length<3)continue;poly(b,'saved',g);}if(points.length>=2)poly(points,'draft',g);for(let i=0;i<points.length;i++){const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('cx',points[i][0]);c.setAttribute('cy',points[i][1]);c.setAttribute('r',Math.max(5,width/250));c.setAttribute('class','vertex');c.dataset.index=i;g.appendChild(c);c.addEventListener('pointerdown',startDrag);}}
+function poly(p,cls,g){const el=document.createElementNS('http://www.w3.org/2000/svg','polygon');el.setAttribute('points',p.map(x=>x.join(',')).join(' '));el.setAttribute('class',cls);g.appendChild(el);}
+function coordinate(e){const svg=$('lfBoundarySVG'),pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;const matrix=svg.getScreenCTM();if(!matrix)return null;const p=pt.matrixTransform(matrix.inverse());return [Math.max(0,Math.min(width,Math.round(p.x))),Math.max(0,Math.min(height,Math.round(p.y)))];}
+let dragging=-1;
+function startDrag(e){e.preventDefault();e.stopPropagation();dragging=Number(e.target.dataset.index);$('lfBoundarySVG').setPointerCapture(e.pointerId);}
+function setup(){const svg=$('lfBoundarySVG');svg.addEventListener('pointerdown',e=>{if(!chosen||e.target.classList.contains('vertex'))return;const p=coordinate(e);if(p){points.push(p);draw();}});svg.addEventListener('pointermove',e=>{if(dragging<0)return;const p=coordinate(e);if(p){points[dragging]=p;draw();}});svg.addEventListener('pointerup',()=>dragging=-1);svg.addEventListener('pointercancel',()=>dragging=-1);}
+async function save(){if(!chosen){msg('Select a lot first.',true);return;}if(points.length>0&&points.length<3){msg('Draw at least three points before saving.',true);return;}try{msg('Saving boundary to Supabase…');await req(api.from('lots').update({boundary:points.length?points:null}).eq('id',chosen.id).select('id').single());chosen.boundary=points.length?points.map(p=>p.slice()):null;const estate=estates.find(e=>e.id===chosen.estate_id);if(estate){window.LF_CLOUD_BOUNDARIES=window.LF_CLOUD_BOUNDARIES||{};window.LF_CLOUD_BOUNDARIES[estate.estate_key]=window.LF_CLOUD_BOUNDARIES[estate.estate_key]||{};if(points.length)window.LF_CLOUD_BOUNDARIES[estate.estate_key][String(chosen.lot_number)]=points.map(p=>p.slice());else delete window.LF_CLOUD_BOUNDARIES[estate.estate_key][String(chosen.lot_number)];}const savedLotId=chosen.id,savedLotNumber=chosen.lot_number;renderLots();$('lfBoundaryLot').value=savedLotId;selectLot();msg('Saved Lot '+savedLotNumber+' boundary to Supabase. Refresh the visitor masterplan to see the highlight.');}catch(e){msg('Save failed: '+e.message+'. Check Supabase lots UPDATE permissions.',true);}}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{init();setup();});else{init();setup();}
 })();
 </script>
 </body>

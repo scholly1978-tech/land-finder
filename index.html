@@ -1983,7 +1983,8 @@ async function refreshCloud(){
    const key=String(e.estate_key||'').trim();
    // The existing kiosk uses wal / alf / gow, or estateKeyFor(i) for added estates.
    const known=typeof DB!=='undefined' && (Object.prototype.hasOwnProperty.call(DB,key)|| (typeof getEstateRecords==='function'&&getEstateRecords().some((_,i)=>estateKeyFor(i)===key)));
-   if(!known)continue;
+   // Cloud estates are not limited to the three original kiosk keys.
+   if(!key)continue;
    matched++;
    const records=(grouped.get(e.id)||[]).map(l=>[
      String(l.lot_number||''),stageById.get(l.stage_id)||'',String(l.frontage??''),String(l.area??''),String(l.title??''),l.price==null?null:Number(l.price),String(l.status||'Available'),String(l.orientation||''),String(l.street||''),Array.isArray(l.features)?l.features:[]
@@ -2156,17 +2157,47 @@ const api=window.supabase?.createClient('https://ajlbququbswnmzmbkiro.supabase.c
 let estates=[],stages=[],plans=[],selected=null,working=false;
 async function req(p){const {data,error}=await p;if(error)throw error;return data;}
 function msg(s,err=false){$('lfEstateMsg').textContent=s;$('lfEstateMsg').className='lfnote'+(err?' lferr':'');}
-function init(){const admin=$('admin');if(!admin)return;const box=document.createElement('div');box.id='lfEstateCloud';box.innerHTML=`<h2>Cloud Estate Management</h2><p>Manage estates and stages on Supabase. This replaces the older local-only estate editor in this test.</p><div id="lfEstateLogin" class="lfrow"><label>Admin email<input id="lfEstateEmail" type="email" autocomplete="username"></label><label>Password<input id="lfEstatePass" type="password" autocomplete="current-password"></label><button id="lfEstateSign" class="lfprimary">Sign in</button></div><div id="lfEstateWork" hidden><div class="lfrow"><button id="lfEstateReload">Refresh estates</button><button id="lfEstateNew" class="lfprimary">+ Add estate</button></div><div id="lfEstateList"></div><div id="lfEstateEditor"></div></div><div id="lfEstateMsg" class="lfnote" role="status">Sign in to manage server estates.</div><p style="font-size:12px">Masterplan URLs are stored in Supabase; uploading image files to Supabase Storage and automatically displaying newly added estates on the visitor kiosk are not yet enabled. Existing masterplan images remain untouched. Do not use the old local editor for server changes.</p>`;admin.insertBefore(box,admin.querySelector('.admin-grid'));$('lfEstateSign').onclick=signIn;$('lfEstateReload').onclick=load;$('lfEstateNew').onclick=()=>editor(null);api?.auth.getUser().then(({data})=>{if(data?.user)load();});}
+function init(){const admin=$('admin');if(!admin)return;const box=document.createElement('div');box.id='lfEstateCloud';box.innerHTML=`<h2>Cloud Estate Management</h2><p>Manage estates and stages on Supabase. This replaces the older local-only estate editor in this test.</p><div id="lfEstateLogin" class="lfrow"><label>Admin email<input id="lfEstateEmail" type="email" autocomplete="username"></label><label>Password<input id="lfEstatePass" type="password" autocomplete="current-password"></label><button id="lfEstateSign" class="lfprimary">Sign in</button></div><div id="lfEstateWork" hidden><div class="lfrow"><button id="lfEstateReload">Refresh estates</button><button id="lfEstateNew" class="lfprimary">+ Add estate</button></div><div id="lfEstateList"></div><div id="lfEstateEditor"></div></div><div id="lfEstateMsg" class="lfnote" role="status">Sign in to manage server estates.</div><p style="font-size:12px">Masterplan images can be uploaded to the existing Supabase Storage bucket. TEST and LIVE currently share the same database: saving an estate or masterplan here also changes LIVE data. Do not use the old local editor for server changes.</p>`;admin.insertBefore(box,admin.querySelector('.admin-grid'));$('lfEstateSign').onclick=signIn;$('lfEstateReload').onclick=load;$('lfEstateNew').onclick=()=>editor(null);api?.auth.getUser().then(({data})=>{if(data?.user)load();});}
 async function signIn(){try{if(!api)throw Error('Supabase library unavailable');msg('Signing in…');await req(api.auth.signInWithPassword({email:$('lfEstateEmail').value.trim(),password:$('lfEstatePass').value}));$('lfEstatePass').value='';await load();}catch(e){msg('Sign in failed: '+e.message,true);}}
 async function load(){if(working)return;working=true;try{const {data:{user}}=await api.auth.getUser();if(!user)throw Error('Please sign in first.');msg('Loading estates…');[estates,stages,plans]=await Promise.all([req(api.from('estates').select('id,name,estate_key,developer,suburb,state,address,description,active').order('name')),req(api.from('stages').select('id,estate_id,name,sort_order').order('sort_order')),req(api.from('masterplans').select('id,estate_id,title,image_url,is_primary,sort_order'))]);$('lfEstateLogin').hidden=true;$('lfEstateWork').hidden=false;render();msg(estates.length+' estate(s) loaded from Supabase.');}catch(e){msg('Load failed: '+e.message,true);}finally{working=false;}}
 function render(){$('lfEstateList').innerHTML=estates.length?estates.map(e=>`<div class="lfitem"><b>${esc(e.name)}</b> <small>(${esc(e.estate_key)}) · ${e.active?'Visible':'Hidden'} · ${stages.filter(s=>s.estate_id===e.id).length} stage(s)</small> <button data-estate="${esc(e.id)}">Edit estate / stages</button></div>`).join(''):'No server estates yet.';$('lfEstateList').querySelectorAll('[data-estate]').forEach(b=>b.onclick=()=>editor(estates.find(e=>e.id===b.dataset.estate)));}
-function editor(e){selected=e?.id||null;const ed=$('lfEstateEditor'),ss=stages.filter(s=>s.estate_id===selected),pp=plans.find(p=>p.estate_id===selected&&p.is_primary)||plans.find(p=>p.estate_id===selected);ed.innerHTML=`<div class="lfitem"><h3>${e?'Edit estate':'Add estate'}</h3><div class="lfrow"><label>Name<input id="lfEN" value="${esc(e?.name)}"></label><label>Estate key<input id="lfEK" value="${esc(e?.estate_key)}" ${e?'readonly':''} placeholder="e.g. riverview"></label><label>Developer<input id="lfED" value="${esc(e?.developer)}"></label></div><div class="lfrow"><label>Suburb<input id="lfES" value="${esc(e?.suburb)}"></label><label>State<input id="lfEST" value="${esc(e?.state||'QLD')}"></label><label>Address<input id="lfEA" value="${esc(e?.address)}"></label></div><label>Description<textarea id="lfEDesc">${esc(e?.description)}</textarea></label><label><input type="checkbox" id="lfEActive" ${e?.active!==false?'checked':''} style="width:auto"> Active estate</label><button id="lfESave" class="lfprimary">Save estate to Supabase</button><button id="lfECancel">Close editor</button>${e?`<h3>Stages</h3><div id="lfStageList">${ss.map(s=>`<div class="lfrow"><label>Stage name<input data-stage-name="${esc(s.id)}" value="${esc(s.name)}"></label><button data-stage-save="${esc(s.id)}">Save</button><button data-stage-delete="${esc(s.id)}">Delete</button></div>`).join('')}</div><div class="lfrow"><label>New stage name<input id="lfStageNew" placeholder="Stage 1"></label><button id="lfStageAdd">+ Add stage</button></div><h3>Primary masterplan link</h3><p style="font-size:12px">Enter an existing publicly accessible image URL. This saves its reference only; it does not upload a file or replace the visitor map yet.</p><label>Image URL<input id="lfPlanURL" type="url" value="${esc(pp?.image_url)}" placeholder="https://..."></label><button id="lfPlanSave">Save masterplan link</button>`:''}</div>`;
-$('lfESave').onclick=saveEstate;$('lfECancel').onclick=()=>ed.replaceChildren();if(e){ed.querySelectorAll('[data-stage-save]').forEach(b=>b.onclick=()=>saveStage(b.dataset.stageSave));ed.querySelectorAll('[data-stage-delete]').forEach(b=>b.onclick=()=>deleteStage(b.dataset.stageDelete));$('lfStageAdd').onclick=addStage;$('lfPlanSave').onclick=savePlan;}}
+function editor(e){selected=e?.id||null;const ed=$('lfEstateEditor'),ss=stages.filter(s=>s.estate_id===selected),pp=plans.find(p=>p.estate_id===selected&&p.is_primary)||plans.find(p=>p.estate_id===selected);ed.innerHTML=`<div class="lfitem"><h3>${e?'Edit estate':'Add estate'}</h3><div class="lfrow"><label>Name<input id="lfEN" value="${esc(e?.name)}"></label><label>Estate key<input id="lfEK" value="${esc(e?.estate_key)}" ${e?'readonly':''} placeholder="e.g. riverview"></label><label>Developer<input id="lfED" value="${esc(e?.developer)}"></label></div><div class="lfrow"><label>Suburb<input id="lfES" value="${esc(e?.suburb)}"></label><label>State<input id="lfEST" value="${esc(e?.state||'QLD')}"></label><label>Address<input id="lfEA" value="${esc(e?.address)}"></label></div><label>Description<textarea id="lfEDesc">${esc(e?.description)}</textarea></label><label><input type="checkbox" id="lfEActive" ${e?.active!==false?'checked':''} style="width:auto"> Active estate</label><button id="lfESave" class="lfprimary">Save estate to Supabase</button><button id="lfECancel">Close editor</button>${e?`<h3>Stages</h3><div id="lfStageList">${ss.map(s=>`<div class="lfrow"><label>Stage name<input data-stage-name="${esc(s.id)}" value="${esc(s.name)}"></label><button data-stage-save="${esc(s.id)}">Save</button><button data-stage-delete="${esc(s.id)}">Delete</button></div>`).join('')}</div><div class="lfrow"><label>New stage name<input id="lfStageNew" placeholder="Stage 1"></label><button id="lfStageAdd">+ Add stage</button></div><h3>Primary masterplan link</h3><p style="font-size:12px">Upload an image directly to the existing masterplans Storage bucket, or provide a public HTTPS image URL. Changes also affect LIVE because both kiosks share Supabase.</p><label>Image URL<input id="lfPlanURL" type="url" value="${esc(pp?.image_url)}" placeholder="https://..."></label><button id="lfPlanSave">Save masterplan link</button><div style="margin-top:12px"><label>Upload masterplan image (JPG, PNG or WebP, max 15 MB)<input id="lfPlanFile" type="file" accept="image/jpeg,image/png,image/webp"></label><button id="lfPlanUpload" class="lfprimary" type="button">Upload masterplan image</button></div>`:''}</div>`;
+$('lfESave').onclick=saveEstate;$('lfECancel').onclick=()=>ed.replaceChildren();if(e){ed.querySelectorAll('[data-stage-save]').forEach(b=>b.onclick=()=>saveStage(b.dataset.stageSave));ed.querySelectorAll('[data-stage-delete]').forEach(b=>b.onclick=()=>deleteStage(b.dataset.stageDelete));$('lfStageAdd').onclick=addStage;$('lfPlanSave').onclick=savePlan;$('lfPlanUpload').onclick=uploadPlan;}}
 async function saveEstate(){try{const name=$('lfEN').value.trim(),key=$('lfEK').value.trim().toLowerCase();if(!name||!key)throw Error('Name and estate key are required.');if(!/^[a-z0-9_-]+$/.test(key))throw Error('Estate key must use lowercase letters, digits, hyphens or underscores.');if(estates.some(e=>e.id!==selected&&e.estate_key===key))throw Error('Estate key already in use.');const payload={name,estate_key:key,developer:$('lfED').value.trim(),suburb:$('lfES').value.trim(),state:$('lfEST').value.trim(),address:$('lfEA').value.trim(),description:$('lfEDesc').value.trim(),active:$('lfEActive').checked};$('lfESave').disabled=true;msg('Saving estate…');if(selected)await req(api.from('estates').update(payload).eq('id',selected).select('id').single());else await req(api.from('estates').insert(payload).select('id').single());$('lfEstateEditor').replaceChildren();await load();msg('Estate saved to Supabase.');}catch(e){msg('Estate save failed: '+e.message,true);if($('lfESave'))$('lfESave').disabled=false;}}
 async function saveStage(id){try{const name=document.querySelector('[data-stage-name="'+id+'"]')?.value.trim();if(!name)throw Error('Stage name is required.');await req(api.from('stages').update({name}).eq('id',id).select('id').single());await reloadEditor('Stage saved.');}catch(e){msg('Stage save failed: '+e.message,true);}}
 async function addStage(){try{const name=$('lfStageNew').value.trim();if(!name)throw Error('Enter a stage name.');await req(api.from('stages').insert({estate_id:selected,name,sort_order:stages.filter(s=>s.estate_id===selected).length}).select('id').single());await reloadEditor('Stage added.');}catch(e){msg('Stage add failed: '+e.message,true);}}
 async function deleteStage(id){if(!confirm('Delete this stage? Lots assigned to it may prevent deletion.'))return;try{await req(api.from('stages').delete().eq('id',id).select('id').single());await reloadEditor('Stage deleted.');}catch(e){msg('Stage delete failed: '+e.message,true);}}
 async function savePlan(){try{const url=$('lfPlanURL').value.trim();if(!url||!/^https:\/\//i.test(url))throw Error('Enter a full HTTPS image URL.');const old=plans.find(p=>p.estate_id===selected&&p.is_primary)||plans.find(p=>p.estate_id===selected);const payload={estate_id:selected,title:'Primary masterplan',image_url:url,is_primary:true,sort_order:0};if(old)await req(api.from('masterplans').update(payload).eq('id',old.id).select('id').single());else await req(api.from('masterplans').insert(payload).select('id').single());await reloadEditor('Masterplan link saved. Kiosk image integration is still pending.');}catch(e){msg('Masterplan save failed: '+e.message,true);}}
+async function uploadPlan(){
+ const btn=$('lfPlanUpload'), input=$('lfPlanFile');
+ let path=null;
+ try{
+  if(!selected)throw Error('Save the estate before uploading its masterplan.');
+  const file=input?.files?.[0];
+  if(!file)throw Error('Choose a JPG, PNG or WebP image first.');
+  const types={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'};
+  if(!types[file.type])throw Error('Only JPG, PNG and WebP images are supported.');
+  if(file.size>15*1024*1024)throw Error('Image exceeds 15 MB. Please reduce its size.');
+  const {data:{user},error:authError}=await api.auth.getUser();
+  if(authError||!user)throw Error('Sign in as Admin first.');
+  if(!confirm('Upload this masterplan? TEST and LIVE share the same database, so the new image will also be used on LIVE.'))return;
+  btn.disabled=true;msg('Uploading masterplan to Supabase Storage…');
+  path='estates/'+selected+'/'+Date.now()+'-'+Math.random().toString(36).slice(2,10)+'.'+types[file.type];
+  const {error:uploadError}=await api.storage.from('masterplans').upload(path,file,{contentType:file.type,upsert:false,cacheControl:'3600'});
+  if(uploadError)throw uploadError;
+  const {data:publicData}=api.storage.from('masterplans').getPublicUrl(path);
+  if(!publicData?.publicUrl)throw Error('Unable to generate image URL.');
+  const old=plans.find(p=>p.estate_id===selected&&p.is_primary)||plans.find(p=>p.estate_id===selected);
+  const payload={estate_id:selected,title:'Primary masterplan',image_url:publicData.publicUrl,is_primary:true,sort_order:0};
+  if(old)await req(api.from('masterplans').update(payload).eq('id',old.id).select('id').single());
+  else await req(api.from('masterplans').insert(payload).select('id').single());
+  path=null;
+  await reloadEditor('Masterplan image uploaded and linked successfully. Remember: LIVE shares this data.');
+ }catch(e){
+  if(path){try{await api.storage.from('masterplans').remove([path]);}catch(_){}}
+  msg('Masterplan upload failed: '+e.message,true);
+ }finally{if(btn.isConnected)btn.disabled=false;}
+}
 async function reloadEditor(note){const id=selected;await load();editor(estates.find(e=>e.id===id));msg(note);}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
@@ -2272,6 +2303,96 @@ function startDrag(e){e.preventDefault();e.stopPropagation();dragging=Number(e.t
 function setup(){const svg=$('lfBoundarySVG');svg.addEventListener('pointerdown',e=>{if(!chosen||e.target.classList.contains('vertex'))return;const p=coordinate(e);if(p){points.push(p);draw();}});svg.addEventListener('pointermove',e=>{if(dragging<0)return;const p=coordinate(e);if(p){points[dragging]=p;draw();}});svg.addEventListener('pointerup',()=>dragging=-1);svg.addEventListener('pointercancel',()=>dragging=-1);}
 async function save(){if(!chosen){msg('Select a lot first.',true);return;}if(points.length>0&&points.length<3){msg('Draw at least three points before saving.',true);return;}try{msg('Saving boundary to Supabase…');await req(api.from('lots').update({boundary:points.length?points:null}).eq('id',chosen.id).select('id').single());chosen.boundary=points.length?points.map(p=>p.slice()):null;const estate=estates.find(e=>e.id===chosen.estate_id);if(estate){window.LF_CLOUD_BOUNDARIES=window.LF_CLOUD_BOUNDARIES||{};window.LF_CLOUD_BOUNDARIES[estate.estate_key]=window.LF_CLOUD_BOUNDARIES[estate.estate_key]||{};if(points.length)window.LF_CLOUD_BOUNDARIES[estate.estate_key][String(chosen.lot_number)]=points.map(p=>p.slice());else delete window.LF_CLOUD_BOUNDARIES[estate.estate_key][String(chosen.lot_number)];}const savedLotId=chosen.id,savedLotNumber=chosen.lot_number;renderLots();$('lfBoundaryLot').value=savedLotId;selectLot();msg('Saved Lot '+savedLotNumber+' boundary to Supabase. Refresh the visitor masterplan to see the highlight.');}catch(e){msg('Save failed: '+e.message+'. Check Supabase lots UPDATE permissions.',true);}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{init();setup();});else{init();setup();}
+})();
+</script>
+<script>
+/* TEST ONLY — Cloud-driven visitor estate catalogue, October 2026.
+   Reads public active estates and their primary masterplans. No database writes. */
+(function(){
+ 'use strict';
+ const ROOT='https://ajlbququbswnmzmbkiro.supabase.co/rest/v1/';
+ const KEY='sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43';
+ const cloudEstates=new Map();
+ let catalogReady=false;
+ async function get(table,query){
+   const r=await fetch(ROOT+table+'?'+query,{headers:{apikey:KEY,Authorization:'Bearer '+KEY,Accept:'application/json'},cache:'no-store'});
+   if(!r.ok)throw new Error(table+' HTTP '+r.status);
+   return r.json();
+ }
+ function safeKey(v){return String(v||'').trim();}
+ function showCloudEstate(key){
+   const e=cloudEstates.get(key);
+   if(!e||!e.image){alert('This estate does not have a masterplan available yet.');return;}
+   // The original kiosk's openEstate() is wrapped by its cloud refresh integration.
+   window.openEstate(e.name,key);
+   const img=document.getElementById('masterImage');
+   img.src=e.image;
+   const hint=document.getElementById('mapHint');
+   if(hint)hint.textContent='Choose an available lot from the list. Highlighted lots will appear once boundaries are drawn.';
+   function align(){
+     if(currentKey!==key||!img.naturalWidth||!img.naturalHeight)return;
+     const svg=document.getElementById('overlay'), host=img.parentElement;
+     if(!svg||!host)return;
+     // Match the image's object-fit:contain rectangle, so cloud boundary coordinates line up.
+     const w=host.clientWidth,h=host.clientHeight,scale=Math.min(w/img.naturalWidth,h/img.naturalHeight);
+     const dw=img.naturalWidth*scale,dh=img.naturalHeight*scale;
+     svg.style.left=((w-dw)/2)+'px';svg.style.top=((h-dh)/2)+'px';
+     svg.style.width=dw+'px';svg.style.height=dh+'px';svg.style.right='auto';svg.style.bottom='auto';
+     svg.setAttribute('viewBox','0 0 '+img.naturalWidth+' '+img.naturalHeight);
+     svg.setAttribute('preserveAspectRatio','none');
+     // buildOverlay() sets legacy dimensions; correct them after it runs.
+   }
+   img.addEventListener('load',()=>{if(currentKey!==key)return;buildOverlay();align();},{once:true});
+   if(img.complete&&img.naturalWidth){buildOverlay();align();}
+   window.__lfCloudAlign=align;
+ }
+ function renderCatalog(){
+   const host=document.querySelector('#home .cards');if(!host||!cloudEstates.size)return;
+   host.replaceChildren();
+   for(const [key,e] of cloudEstates){
+     const card=document.createElement('div');card.className='card';
+     const top=document.createElement('div'),pill=document.createElement('span');pill.className='pill';
+     pill.textContent=e.image?'Available to explore':'Coming soon';
+     const title=document.createElement('h2');title.textContent=e.name;
+     top.append(pill,title);
+     if(e.suburb){const sub=document.createElement('div');sub.textContent=e.suburb;top.append(sub);}
+     const btn=document.createElement('button');btn.className='btn '+(e.image?'primary':'secondary');
+     btn.textContent=e.image?'Explore estate →':'Coming soon';btn.disabled=!e.image;
+     if(e.image)btn.addEventListener('click',()=>showCloudEstate(key));
+     card.append(top,btn);host.append(card);
+   }
+ }
+ async function refreshCatalog(){
+   try{
+     const [estates,plans]=await Promise.all([
+       get('estates','select=id,estate_key,name,active&active=eq.true&limit=1000'),
+       get('masterplans','select=estate_id,image_url,is_primary,sort_order&limit=1000')
+     ]);
+     const byEstate=new Map();
+     for(const p of plans){if(!p.image_url)continue;const prior=byEstate.get(p.estate_id);
+       if(!prior||(!prior.is_primary&&p.is_primary)||prior.is_primary===p.is_primary&&Number(p.sort_order||0)<Number(prior.sort_order||0))byEstate.set(p.estate_id,p);
+     }
+     cloudEstates.clear();
+     for(const e of estates){const key=safeKey(e.estate_key);if(!key)continue;
+       cloudEstates.set(key,{name:e.name||key,image:byEstate.get(e.id)?.image_url||'',suburb:''});
+     }
+     renderCatalog();catalogReady=true;
+   }catch(err){console.warn('Cloud estate catalogue unavailable; keeping existing home cards.',err);}
+ }
+ // For newly added estates, correct the overlay size after the legacy buildOverlay runs.
+ const oldBuild=window.buildOverlay;
+ window.buildOverlay=function(...args){
+   const result=oldBuild.apply(this,args);
+   if(cloudEstates.has(currentKey)){
+     const img=document.getElementById('masterImage'),svg=document.getElementById('overlay');
+     if(img?.naturalWidth&&svg){svg.setAttribute('viewBox','0 0 '+img.naturalWidth+' '+img.naturalHeight);}
+     if(window.__lfCloudAlign)window.__lfCloudAlign();
+   }
+   return result;
+ };
+ window.addEventListener('resize',()=>window.__lfCloudAlign?.());
+ const start=()=>{refreshCatalog();document.getElementById('lfCloudRefresh')?.addEventListener('click',()=>setTimeout(refreshCatalog,250));};
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 })();
 </script>
 </body>

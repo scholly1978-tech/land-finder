@@ -2113,6 +2113,7 @@ window.openLeadManagement=function(){const modal=$('leadWorkspace');modal.classL
 (function(){
 'use strict';
 const api=window.supabase?.createClient('https://ajlbququbswnmzmbkiro.supabase.co','sb_publishable_BV5evD2xFxRCoVCbFrWwzw_eqTByI43',{auth:{persistSession:false,autoRefreshToken:true,detectSessionInUrl:false}});
+window.__lfLotImportClient=api;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let estates=[],stages=[],lots=[],editing=null,loaded=false,loading=false;
@@ -2393,6 +2394,164 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
  window.addEventListener('resize',()=>window.__lfCloudAlign?.());
  const start=()=>{refreshCatalog();document.getElementById('lfCloudRefresh')?.addEventListener('click',()=>setTimeout(refreshCatalog,250));};
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+<!-- TEST ONLY: PDF price-list importer with explicit review and approval. -->
+<style>
+#lfPdfImporter{border:1px solid #d4ded8;border-radius:12px;padding:15px;margin:15px 0;background:#f7faf8}#lfPdfImporter h3{margin:0 0 7px}#lfPdfImporter .pdf-note{font-size:12px;color:#4d5d53;margin:7px 0}#lfPdfImporter .pdf-table-wrap{overflow:auto;max-height:320px}#lfPdfImporter table{min-width:780px}#lfPdfImporter td,#lfPdfImporter th{padding:7px;font-size:12px}#lfPdfImporter .pdf-alert{color:#9b3226;font-weight:700}
+</style>
+<script>
+(function(){
+'use strict';
+const $=id=>document.getElementById(id);
+let pdfJsPromise;
+let pending=null;
+function ensurePdfJs(){
+ if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+ if(!pdfJsPromise)pdfJsPromise=new Promise((resolve,reject)=>{
+  const script=document.createElement('script');script.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  script.onload=()=>{if(!window.pdfjsLib){reject(Error('PDF reader failed to load'));return;}window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';resolve(window.pdfjsLib)};
+  script.onerror=()=>reject(Error('PDF reader could not load. Check internet connection.'));document.head.appendChild(script);
+ });return pdfJsPromise;
+}
+function install(){
+ const work=$('lfCloudLotWorkspace');if(!work||$('lfPdfImporter'))return;
+ const el=document.createElement('section');el.id='lfPdfImporter';
+ el.innerHTML='<h3>Import developer PDF price list</h3><div class="pdf-note">TEST: Review proposed changes and select individual lots before saving. TEST and LIVE share Supabase, so approved changes will affect LIVE. Supports text-based PDFs like Alford Grove.</div><div class="cloud-row"><label>PDF price list<input type="file" id="lfPdfFile" accept="application/pdf,.pdf"></label><button id="lfPdfPreview" class="cloud-primary" type="button">Preview PDF changes</button></div><div id="lfPdfResults" role="status" class="pdf-note">No PDF selected.</div>';
+ const editor=$('lfCloudLotEditor');work.insertBefore(el,editor||$('lfCloudLotTable'));
+ $('lfPdfPreview').onclick=preview;
+ $('lfPdfFile').onchange=clearPending; $('lfCloudLotFilter').addEventListener('change',clearPending);
+}
+function clearPending(){pending=null;const out=$('lfPdfResults');if(out)out.textContent='Select Preview PDF changes to review the selected file.';}
+function textRows(items){
+ const rows=[];
+ for(const item of items){const t=String(item.str||'').trim();if(!t)continue;const y=item.transform[5],x=item.transform[4];let r=rows.find(r=>Math.abs(r.y-y)<3);if(!r){r={y,words:[]};rows.push(r)}r.words.push({x,t});}
+ return rows.sort((a,b)=>b.y-a.y).map(r=>r.words.sort((a,b)=>a.x-b.x));
+}
+function parse(rows){
+ let stage='',result=[];
+ for(const words of rows){
+  const all=words.map(w=>w.t).join(' ').replace(/\s+/g,' ').trim();
+  const match=all.match(/\bStage\s*(\d+[A-Za-z]?)\b/i);
+  if(match){stage='Stage '+match[1];continue;}
+  if(/Lot\s*#/i.test(all)||!stage)continue;
+  const lot=words.find(w=>w.x<160&&/^\d{1,5}$/.test(w.t));
+  const price=words.find(w=>/\$\s*[\d,]+(?:\.\d{2})?/.test(w.t));
+  if(!lot||!price)continue;
+  const frontage=words.find(w=>w.x>=220&&w.x<325&&/^\d+(?:\.\d+)?\s*m$/i.test(w.t));
+  const area=words.find(w=>w.x>=325&&w.x<410&&/^\d+(?:\.\d+)?\s*(?:sqm|m²)$/i.test(w.t));
+  const registration=words.filter(w=>w.x>=410&&w.x<545).map(w=>w.t).join(' ');
+  const n=Number(price.t.replace(/[^\d.]/g,''));if(!Number.isFinite(n)||n<=0)continue;
+  result.push({stage,lot:lot.t,price:n,frontage:frontage?.t||'',area:area?.t||'',registration});
+ }
+ return result;
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+// Compare measurement values rather than display units (e.g. 525 and 525sqm).
+// Preserve the original saved value when the measurement has not changed.
+function comparableMeasurement(value,unit){
+ const raw=String(value??'').trim().toLowerCase().replace(/,/g,'').replace(/\s+/g,'');
+ if(!raw)return null;
+ const suffix=unit==='area'?'(?:sqm|m²|m2)?':'(?:m|metres?|meters?)?';
+ const match=raw.match(new RegExp('^([+-]?[0-9]+(?:[.][0-9]+)?)'+suffix+'$','i'));
+ return match?Number(match[1]):null;
+}
+function measurementChanged(existing,incoming,unit){
+ const a=comparableMeasurement(existing,unit),b=comparableMeasurement(incoming,unit);
+ if(a!==null&&b!==null)return Math.abs(a-b)>0.000001;
+ return String(existing??'').trim().toLowerCase()!==String(incoming??'').trim().toLowerCase();
+}
+function normalizedRegistration(value){
+ const months={jan:'january',feb:'february',mar:'march',apr:'april',may:'may',jun:'june',jul:'july',aug:'august',sep:'september',sept:'september',oct:'october',nov:'november',dec:'december'};
+ return String(value??'').trim().toLowerCase().replace(/\b(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b\.?/g,(_,abbr)=>months[abbr])
+  .replace(/\s+/g,' ').trim();
+}
+
+async function preview(){
+ const out=$('lfPdfResults'),file=$('lfPdfFile')?.files?.[0],estateId=$('lfCloudLotFilter')?.value;
+ try{
+  if(!file)throw Error('Choose a PDF file first.');if(file.size>15*1024*1024)throw Error('PDF exceeds 15 MB.');
+  if(estateId==='all')throw Error('Please select a specific estate in the Estate dropdown above.');
+  out.textContent='Reading PDF locally in your browser…';
+  const pdfjs=await ensurePdfJs(),data=new Uint8Array(await file.arrayBuffer()),doc=await pdfjs.getDocument({data}).promise;
+  let parsed=[];
+  for(let pageNo=1;pageNo<=Math.min(doc.numPages,15);pageNo++){
+   const page=await doc.getPage(pageNo),content=await page.getTextContent();parsed.push(...parse(textRows(content.items)));
+  }
+  if(!parsed.length)throw Error('No supported pricing rows detected. This PDF may be scanned or use another layout. Nothing was changed.');
+  const name=$('lfCloudLotFilter').selectedOptions[0]?.textContent||'';
+  const client=window.__lfLotImportClient;
+  if(!client)throw Error('Lot Management authentication is unavailable.');
+  const user=await client.auth.getUser();if(!user.data?.user)throw Error('Sign in to Lot Management first.');
+  const [a,b]=await Promise.all([client.from('lots').select('id,lot_number,stage_id,price,frontage,area,title,status').eq('estate_id',estateId),client.from('stages').select('id,name').eq('estate_id',estateId)]);
+  if(a.error||b.error)throw Error('Unable to compare with server inventory: '+(a.error||b.error).message);
+  const existing=a.data||[],stages=b.data||[],duplicate=new Set();
+  const rows=parsed.map(p=>{
+   const key=p.stage.toLowerCase()+'|'+p.lot.toLowerCase(),isDup=duplicate.has(key);duplicate.add(key);
+   const stage=stages.find(s=>s.name.trim().toLowerCase()===p.stage.toLowerCase());
+   const matches=existing.filter(l=>String(l.lot_number).trim().toLowerCase()===p.lot.toLowerCase());
+   const old=stage?matches.find(l=>l.stage_id===stage.id):null;
+   const conflict=matches.length>1||(matches.length===1&&!old);
+   const changes={};
+   if(old){if(Number(old.price)!==p.price)changes.price=p.price;
+    if(p.frontage&&measurementChanged(old.frontage,p.frontage,'frontage'))changes.frontage=p.frontage.trim();
+    if(p.area&&measurementChanged(old.area,p.area,'area'))changes.area=p.area.trim();
+    if(p.registration&&normalizedRegistration(old.title)!==normalizedRegistration(p.registration))changes.title=p.registration.trim();
+   }
+   const blocked=isDup||!stage||conflict;
+   const flag=isDup?'Duplicate in PDF':!stage?'Stage not found':conflict?'Lot number conflict':!old?'New lot':Object.keys(changes).length?'Update':'No change';
+   return {...p,stageId:stage?.id,old,changes,flag,blocked};
+  });
+  pending={estateId,name,rows,fileName:file.name};
+  renderPending();
+ }catch(e){out.textContent='PDF preview: '+e.message;}
+}
+function renderPending(){
+ const out=$('lfPdfResults');if(!pending||!out)return;
+ const {name,rows}=pending,issues=rows.filter(r=>r.blocked).length,actionable=rows.filter(r=>!r.blocked&&r.flag!=='No change').length;
+ out.innerHTML='<p><b>'+esc(name)+'</b> · '+rows.length+' PDF rows · '+issues+' needing attention · '+actionable+' proposed changes. <b>Nothing saved yet.</b></p>'+ 
+ '<div class="cloud-row"><button type="button" id="lfPdfSelectAll">Select all changes</button><button type="button" id="lfPdfSelectNone">Clear selection</button></div>'+ 
+ '<div class="pdf-table-wrap"><table><thead><tr><th>Apply</th><th>Stage</th><th>Lot</th><th>Current price</th><th>PDF price</th><th>Changes</th><th>Result</th></tr></thead><tbody>'+rows.map((r,i)=>{
+ const ok=!r.blocked&&r.flag!=='No change';const desc=r.flag==='New lot'?'New lot: price, frontage, area, registration':Object.keys(r.changes).map(k=>k+': '+(r.old?.[k]??'—')+' → '+r.changes[k]).join('; ')||'—';
+ return '<tr><td><input type="checkbox" data-pdf-check="'+i+'" '+(ok?'checked':'disabled')+'></td><td>'+esc(r.stage)+'</td><td>'+esc(r.lot)+'</td><td>'+(r.old?.price==null?'—':'$'+Number(r.old.price).toLocaleString('en-AU'))+'</td><td>$'+r.price.toLocaleString('en-AU')+'</td><td>'+esc(desc)+'</td><td>'+esc(r.flag)+'</td></tr>';}).join('')+'</tbody></table></div>'+ 
+ '<p class="pdf-note pdf-alert">Statuses never change from PDF imports. Lots absent from the PDF are untouched. Blank PDF fields do not erase saved data. Approved changes update the shared LIVE database.</p>'+ 
+ '<button type="button" id="lfPdfApprove" class="cloud-primary" '+(actionable?'':'disabled')+'>Review & approve selected changes</button><p id="lfPdfSaveMessage" role="status" class="pdf-note"></p>';
+ $('lfPdfSelectAll').onclick=()=>out.querySelectorAll('[data-pdf-check]:not(:disabled)').forEach(c=>c.checked=true);
+ $('lfPdfSelectNone').onclick=()=>out.querySelectorAll('[data-pdf-check]').forEach(c=>c.checked=false);
+ $('lfPdfApprove').onclick=approve;
+}
+async function approve(){
+ const out=$('lfPdfResults'),msg=$('lfPdfSaveMessage');if(!pending)return;
+ const selection=[...out.querySelectorAll('[data-pdf-check]:checked')].map(c=>pending.rows[Number(c.dataset.pdfCheck)]);
+ if(!selection.length){msg.textContent='Select at least one changed lot.';return;}
+ if($('lfCloudLotFilter').value!==pending.estateId){clearPending();return;}
+ const client=window.__lfLotImportClient;const user=await client.auth.getUser();if(!user.data?.user){msg.textContent='Sign in again before saving.';return;}
+ // Re-read selected records to guard against changes since the preview.
+ const {data:current,error}=await client.from('lots').select('id,lot_number,stage_id,price,frontage,area,title,status').eq('estate_id',pending.estateId);
+ if(error){msg.textContent='Could not recheck inventory: '+error.message;return;}
+ for(const r of selection){const same=(current||[]).filter(l=>String(l.lot_number).trim().toLowerCase()===r.lot.toLowerCase());
+  if(r.old){const now=same.find(l=>l.id===r.old.id);if(same.length!==1||!now||['price','frontage','area','title','stage_id','status'].some(k=>String(now[k]??'')!==String(r.old[k]??''))){msg.textContent='Lot '+r.lot+' changed since preview. Refresh the server and preview the PDF again.';return;}}
+  else if(same.length){msg.textContent='Lot '+r.lot+' now exists. Preview again before saving.';return;}
+ }
+ const nNew=selection.filter(r=>!r.old).length,nUpdate=selection.length-nNew;
+ if(!confirm('SAVE TO SHARED SUPABASE DATABASE?\n\nEstate: '+pending.name+'\nUpdate existing lots: '+nUpdate+'\nAdd new lots: '+nNew+'\n\nThis will affect the LIVE kiosk too. No availability statuses will be changed.'))return;
+ const btn=$('lfPdfApprove');btn.disabled=true;let updated=0,added=0,failed=[];
+ for(const r of selection){
+  try{
+   const payload=r.old?r.changes:{estate_id:pending.estateId,stage_id:r.stageId,lot_number:r.lot,price:r.price,status:'Available',frontage:r.frontage||'',area:r.area||'',title:r.registration||''};
+   // New lots have no explicit status in the PDF: require explicit confirmation rather than assuming Available.
+   if(!r.old){const status=prompt('The PDF does not state availability for new Lot '+r.lot+'. Enter Available, Hold, Sold, or Off Market to add it (Cancel skips):','');if(status===null){failed.push('Lot '+r.lot+': skipped (status not confirmed)');continue;}const normalized={'available':'Available','hold':'Hold','on hold':'On Hold','sold':'Sold','off market':'Off Market'}[status.trim().toLowerCase()];if(!normalized){failed.push('Lot '+r.lot+': invalid status, skipped');continue;}payload.status=normalized;}
+   const query=r.old?client.from('lots').update(payload).eq('id',r.old.id):client.from('lots').insert(payload);
+   const {data,error}=await query.select('id');if(error)throw error;if(!data?.length)throw Error('No row saved (check permissions)');
+   if(r.old)updated++;else added++;
+  }catch(e){failed.push('Lot '+r.lot+': '+e.message);}
+ }
+ pending=null;out.innerHTML='<p><b>Import finished.</b> '+updated+' updated, '+added+' added, '+failed.length+' failed or skipped.</p>'+(failed.length?'<p class="pdf-alert">'+failed.map(esc).join('<br>')+'</p>':'')+'<p>Click Refresh from server to verify saved values, then preview the PDF again if necessary.</p>';
+ $('lfCloudLotReload')?.click();
+}
+const observer=new MutationObserver(()=>{if($('lfCloudLotWorkspace')&&!$('lfPdfImporter'))install()});
+function start(){observer.observe(document.body,{childList:true,subtree:true});install();}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 })();
 </script>
 </body>

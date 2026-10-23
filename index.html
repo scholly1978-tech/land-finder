@@ -2120,7 +2120,7 @@ let estates=[],stages=[],lots=[],editing=null,loaded=false,loading=false;
 async function req(p){const {data,error}=await p;if(error)throw error;return data;}
 function message(t,error=false){const el=$('lfCloudLotMsg');if(el){el.textContent=t;el.className='cloud-message'+(error?' cloud-error':'');}}
 function root(){return $('lfCloudLotApp');}
-function template(){const el=$('lotManagerBody');if(!el)return;el.innerHTML=`<div id="lfCloudLotApp"><p><b>Server Lot Management</b> — changes save directly to Supabase and appear on connected kiosks after refresh.</p><div id="lfCloudLotLogin"><div class="cloud-row"><label>Admin email<input id="lfCloudLotEmail" type="email" autocomplete="username"></label><label>Password<input id="lfCloudLotPassword" type="password" autocomplete="current-password"></label><button id="lfCloudLotSignIn" class="cloud-primary">Sign in</button></div></div><div id="lfCloudLotWorkspace" hidden><div class="cloud-row"><button id="lfCloudLotReload">Refresh from server</button><button id="lfCloudLotNew" class="cloud-primary">+ Add lot</button><button id="lfCloudLotSignOut">Sign out</button></div><div class="cloud-row"><label>Estate<select id="lfCloudLotFilter"><option value="all">All estates</option></select></label><label>Search lots<input id="lfCloudLotSearch" placeholder="Lot number or stage"></label></div><div id="lfCloudLotEditor"></div><div id="lfCloudLotTable" class="cloud-scroll"></div><p class="cloud-note">The older local-only lot editor is disabled in this test version to prevent accidental unsynchronised changes. Estate/masterplan editing is not yet cloud-connected.</p></div><div id="lfCloudLotMsg" class="cloud-message" role="status">Sign in to manage server lots.</div></div>`;
+function template(){const el=$('lotManagerBody');if(!el)return;el.innerHTML=`<div id="lfCloudLotApp"><p><b>Server Lot Management</b> — changes save directly to Supabase and appear on connected kiosks after refresh.</p><div id="lfCloudLotLogin"><div class="cloud-row"><label>Admin email<input id="lfCloudLotEmail" type="email" autocomplete="username"></label><label>Password<input id="lfCloudLotPassword" type="password" autocomplete="current-password"></label><button id="lfCloudLotSignIn" class="cloud-primary">Sign in</button></div></div><div id="lfCloudLotWorkspace" hidden><div class="cloud-row"><button id="lfCloudLotReload">Refresh from server</button><button id="lfCloudLotNew" class="cloud-primary">+ Add lot</button><button id="lfCloudLotSignOut">Sign out</button></div><div class="cloud-row"><label>Estate<select id="lfCloudLotFilter"><option value="all">All estates</option></select></label><label>Search lots<input id="lfCloudLotSearch" placeholder="Lot number or stage"></label></div><div id="lfCloudLotEditor"></div><div id="lfCloudLotTable" class="cloud-scroll"></div><p class="cloud-note">The older local-only lot editor is disabled to prevent accidental unsynchronised changes. Estate/masterplan editing is not yet cloud-connected.</p></div><div id="lfCloudLotMsg" class="cloud-message" role="status">Sign in to manage server lots.</div></div>`;
 $('lfCloudLotSignIn').onclick=signIn;$('lfCloudLotReload').onclick=load;$('lfCloudLotNew').onclick=()=>editor(null);$('lfCloudLotSignOut').onclick=signOut;$('lfCloudLotFilter').onchange=render;$('lfCloudLotSearch').oninput=render;
 }
 async function signIn(){try{if(!api)throw Error('Supabase library failed to load.');message('Signing in…');await req(api.auth.signInWithPassword({email:$('lfCloudLotEmail').value.trim(),password:$('lfCloudLotPassword').value}));$('lfCloudLotPassword').value='';await load();}catch(e){message('Sign-in failed: '+e.message,true);}}
@@ -2158,7 +2158,7 @@ const api=window.supabase?.createClient('https://ajlbququbswnmzmbkiro.supabase.c
 let estates=[],stages=[],plans=[],selected=null,working=false;
 async function req(p){const {data,error}=await p;if(error)throw error;return data;}
 function msg(s,err=false){$('lfEstateMsg').textContent=s;$('lfEstateMsg').className='lfnote'+(err?' lferr':'');}
-function init(){const admin=$('admin');if(!admin)return;const box=document.createElement('div');box.id='lfEstateCloud';box.innerHTML=`<h2>Cloud Estate Management</h2><p>Manage estates and stages on Supabase. This replaces the older local-only estate editor in this test.</p><div id="lfEstateLogin" class="lfrow"><label>Admin email<input id="lfEstateEmail" type="email" autocomplete="username"></label><label>Password<input id="lfEstatePass" type="password" autocomplete="current-password"></label><button id="lfEstateSign" class="lfprimary">Sign in</button></div><div id="lfEstateWork" hidden><div class="lfrow"><button id="lfEstateReload">Refresh estates</button><button id="lfEstateNew" class="lfprimary">+ Add estate</button></div><div id="lfEstateList"></div><div id="lfEstateEditor"></div></div><div id="lfEstateMsg" class="lfnote" role="status">Sign in to manage server estates.</div><p style="font-size:12px">Masterplan images can be uploaded to the existing Supabase Storage bucket. TEST and LIVE currently share the same database: saving an estate or masterplan here also changes LIVE data. Do not use the old local editor for server changes.</p>`;admin.insertBefore(box,admin.querySelector('.admin-grid'));$('lfEstateSign').onclick=signIn;$('lfEstateReload').onclick=load;$('lfEstateNew').onclick=()=>editor(null);api?.auth.getUser().then(({data})=>{if(data?.user)load();});}
+function init(){const admin=$('admin');if(!admin)return;const box=document.createElement('div');box.id='lfEstateCloud';box.innerHTML=`<h2>Cloud Estate Management</h2><p>Manage estates and stages on Supabase. This replaces the older local-only estate editor.</p><div id="lfEstateLogin" class="lfrow"><label>Admin email<input id="lfEstateEmail" type="email" autocomplete="username"></label><label>Password<input id="lfEstatePass" type="password" autocomplete="current-password"></label><button id="lfEstateSign" class="lfprimary">Sign in</button></div><div id="lfEstateWork" hidden><div class="lfrow"><button id="lfEstateReload">Refresh estates</button><button id="lfEstateNew" class="lfprimary">+ Add estate</button></div><div id="lfEstateList"></div><div id="lfEstateEditor"></div></div><div id="lfEstateMsg" class="lfnote" role="status">Sign in to manage server estates.</div><p style="font-size:12px">Masterplan images can be uploaded to the existing Supabase Storage bucket. Changes save to the live database. Do not use the old local editor for server changes.</p>`;admin.insertBefore(box,admin.querySelector('.admin-grid'));$('lfEstateSign').onclick=signIn;$('lfEstateReload').onclick=load;$('lfEstateNew').onclick=()=>editor(null);api?.auth.getUser().then(({data})=>{if(data?.user)load();});}
 async function signIn(){try{if(!api)throw Error('Supabase library unavailable');msg('Signing in…');await req(api.auth.signInWithPassword({email:$('lfEstateEmail').value.trim(),password:$('lfEstatePass').value}));$('lfEstatePass').value='';await load();}catch(e){msg('Sign in failed: '+e.message,true);}}
 async function load(){if(working)return;working=true;try{const {data:{user}}=await api.auth.getUser();if(!user)throw Error('Please sign in first.');msg('Loading estates…');[estates,stages,plans]=await Promise.all([req(api.from('estates').select('id,name,estate_key,developer,suburb,state,address,description,active').order('name')),req(api.from('stages').select('id,estate_id,name,sort_order').order('sort_order')),req(api.from('masterplans').select('id,estate_id,title,image_url,is_primary,sort_order'))]);$('lfEstateLogin').hidden=true;$('lfEstateWork').hidden=false;render();msg(estates.length+' estate(s) loaded from Supabase.');}catch(e){msg('Load failed: '+e.message,true);}finally{working=false;}}
 function render(){$('lfEstateList').innerHTML=estates.length?estates.map(e=>`<div class="lfitem"><b>${esc(e.name)}</b> <small>(${esc(e.estate_key)}) · ${e.active?'Visible':'Hidden'} · ${stages.filter(s=>s.estate_id===e.id).length} stage(s)</small> <button data-estate="${esc(e.id)}">Edit estate / stages</button></div>`).join(''):'No server estates yet.';$('lfEstateList').querySelectorAll('[data-estate]').forEach(b=>b.onclick=()=>editor(estates.find(e=>e.id===b.dataset.estate)));}
@@ -2181,7 +2181,7 @@ async function uploadPlan(){
   if(file.size>15*1024*1024)throw Error('Image exceeds 15 MB. Please reduce its size.');
   const {data:{user},error:authError}=await api.auth.getUser();
   if(authError||!user)throw Error('Sign in as Admin first.');
-  if(!confirm('Upload this masterplan? TEST and LIVE share the same database, so the new image will also be used on LIVE.'))return;
+  if(!confirm('Upload this masterplan to the live database? The new image will be used on connected kiosks.'))return;
   btn.disabled=true;msg('Uploading masterplan to Supabase Storage…');
   path='estates/'+selected+'/'+Date.now()+'-'+Math.random().toString(36).slice(2,10)+'.'+types[file.type];
   const {error:uploadError}=await api.storage.from('masterplans').upload(path,file,{contentType:file.type,upsert:false,cacheControl:'3600'});
@@ -2404,7 +2404,29 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
-let pdfJsPromise;
+let pdfJsPromise, ocrPromise;
+async function ensureOcr(){
+ if(window.Tesseract)return window.Tesseract;
+ if(!ocrPromise)ocrPromise=new Promise((resolve,reject)=>{const sc=document.createElement("script");sc.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";sc.onload=()=>window.Tesseract?resolve(window.Tesseract):reject(Error("Image reader unavailable"));sc.onerror=()=>reject(Error("Could not load image reader. Check internet connection."));document.head.appendChild(sc);});
+ return ocrPromise;
+}
+async function ocrImage(source,onProgress){
+ const T=await ensureOcr();const worker=await T.createWorker("eng",1,{logger:m=>{if(m.status==="recognizing text"&&onProgress)onProgress(Math.round((m.progress||0)*100));}});
+ try{const r=await worker.recognize(source);return r.data.text||"";}finally{await worker.terminate();}
+}
+function parseOcrText(text){
+ let stage="",found=[];
+ for(const raw of text.split(/\r?\n/)){
+  const line=raw.replace(/[|]/g," ").replace(/\s+/g," ").trim();
+  const sm=line.match(/\bStage\s*(\d+[a-z]?)\b/i);if(sm){stage="Stage "+sm[1];if(/^Stage\s*\d+[a-z]?$/i.test(line))continue;}
+  // Rows: lot, optional soil type, frontage, land area, registration, price.
+  const m=line.match(/^\s*(?:Lot\s*)?(\d{1,5})\s+(?:(?:N\/?A|[A-Z]{1,3})\s+)?(\d{1,3}(?:\.\d+)?)\s*m\s+([\d,]+(?:\.\d+)?)\s*(?:sqm|m2|m²)\s+(.+?)\s+(Offers?\s+over\s+)?\$\s*([\d,]+(?:\.\d{2})?)/i);
+  if(!m)continue;
+  const price=Number(m[6].replace(/,/g,""));if(!price)continue;
+  found.push({stage,lot:m[1],frontage:m[2]+"m",area:m[3]+"sqm",registration:m[4].trim(),price,priceQualifier:m[5]?"Offers over":""});
+ }return found;
+}
+
 let pending=null;
 function ensurePdfJs(){
  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
@@ -2417,7 +2439,7 @@ function ensurePdfJs(){
 function install(){
  const work=$('lfCloudLotWorkspace');if(!work||$('lfPdfImporter'))return;
  const el=document.createElement('section');el.id='lfPdfImporter';
- el.innerHTML='<h3>Import developer PDF price list</h3><div class="pdf-note">TEST: Review proposed changes and select individual lots before saving. TEST and LIVE share Supabase, so approved changes will affect LIVE. Supports text-based PDFs like Alford Grove.</div><div class="cloud-row"><label>PDF price list<input type="file" id="lfPdfFile" accept="application/pdf,.pdf"></label><button id="lfPdfPreview" class="cloud-primary" type="button">Preview PDF changes</button></div><div id="lfPdfResults" role="status" class="pdf-note">No PDF selected.</div>';
+ el.innerHTML='<h3>Import developer price list — PDF, JPEG or PNG</h3><div class="pdf-note">Review extracted details before saving. Images and scanned PDFs use text recognition and may contain errors. Offers-over prices require manual review. Approved changes save to the live Supabase database.</div><div class="cloud-row"><label>Developer price list<input type="file" id="lfPdfFile" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png"></label><button id="lfPdfPreview" class="cloud-primary" type="button">Preview price list</button></div><div id="lfPdfResults" role="status" class="pdf-note">No file selected.</div>';
  const editor=$('lfCloudLotEditor');work.insertBefore(el,editor||$('lfCloudLotTable'));
  $('lfPdfPreview').onclick=preview;
  $('lfPdfFile').onchange=clearPending; $('lfCloudLotFilter').addEventListener('change',clearPending);
@@ -2470,15 +2492,34 @@ function normalizedRegistration(value){
 async function preview(){
  const out=$('lfPdfResults'),file=$('lfPdfFile')?.files?.[0],estateId=$('lfCloudLotFilter')?.value;
  try{
-  if(!file)throw Error('Choose a PDF file first.');if(file.size>15*1024*1024)throw Error('PDF exceeds 15 MB.');
+  if(!file)throw Error('Choose a PDF, JPG or PNG file first.');if(file.size>15*1024*1024)throw Error('File exceeds 15 MB.');
   if(estateId==='all')throw Error('Please select a specific estate in the Estate dropdown above.');
-  out.textContent='Reading PDF locally in your browser…';
-  const pdfjs=await ensurePdfJs(),data=new Uint8Array(await file.arrayBuffer()),doc=await pdfjs.getDocument({data}).promise;
+  const isPdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name),isImage=/^image\/(jpeg|png)$/.test(file.type)||/\.(jpe?g|png)$/i.test(file.name);
+  if(!isPdf&&!isImage)throw Error('Only PDF, JPG and PNG price lists are supported.');
+  out.textContent='Reading file locally in your browser…';
   let parsed=[];
-  for(let pageNo=1;pageNo<=Math.min(doc.numPages,15);pageNo++){
-   const page=await doc.getPage(pageNo),content=await page.getTextContent();parsed.push(...parse(textRows(content.items)));
+  if(isImage){
+   const imageUrl=URL.createObjectURL(file);
+   try{const recognized=await ocrImage(imageUrl,p=>out.textContent='Reading image text… '+p+'%');parsed=parseOcrText(recognized);}
+   finally{URL.revokeObjectURL(imageUrl);}
+  }else{
+   const pdfjs=await ensurePdfJs(),data=new Uint8Array(await file.arrayBuffer()),doc=await pdfjs.getDocument({data}).promise;
+   for(let pageNo=1;pageNo<=Math.min(doc.numPages,15);pageNo++){
+    const page=await doc.getPage(pageNo),content=await page.getTextContent();
+    const wordRows=textRows(content.items);
+    let pageParsed=parse(wordRows);
+    if(!pageParsed.length){pageParsed=parseOcrText(wordRows.map(row=>row.map(w=>w.t).join(' ')).join('\n'));}
+    if(!pageParsed.length){
+     out.textContent='Scanning PDF page '+pageNo+' of '+Math.min(doc.numPages,15)+'…';
+     const viewport=page.getViewport({scale:2});const canvas=document.createElement('canvas');canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
+     await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+     pageParsed=parseOcrText(await ocrImage(canvas,p=>out.textContent='Reading PDF page '+pageNo+'… '+p+'%'));
+     canvas.width=canvas.height=0;
+    }
+    parsed.push(...pageParsed);
+   }
   }
-  if(!parsed.length)throw Error('No supported pricing rows detected. This PDF may be scanned or use another layout. Nothing was changed.');
+  if(!parsed.length)throw Error('No supported pricing rows detected. The layout may need a tailored reader. Nothing was changed.');
   const name=$('lfCloudLotFilter').selectedOptions[0]?.textContent||'';
   const client=window.__lfLotImportClient;
   if(!client)throw Error('Lot Management authentication is unavailable.');
@@ -2488,8 +2529,15 @@ async function preview(){
   const existing=a.data||[],stages=b.data||[],duplicate=new Set();
   const rows=parsed.map(p=>{
    const key=p.stage.toLowerCase()+'|'+p.lot.toLowerCase(),isDup=duplicate.has(key);duplicate.add(key);
-   const stage=stages.find(s=>s.name.trim().toLowerCase()===p.stage.toLowerCase());
    const matches=existing.filter(l=>String(l.lot_number).trim().toLowerCase()===p.lot.toLowerCase());
+   // A stage-free developer list can match an EXISTING lot only when its number
+   // occurs exactly once in the selected estate. Never guess for duplicate lots.
+   // For new lots, a single configured estate stage is the only safe fallback.
+   const stage=p.stage
+    ? stages.find(s=>s.name.trim().toLowerCase()===p.stage.trim().toLowerCase())
+    : matches.length===1
+      ? stages.find(s=>s.id===matches[0].stage_id)
+      : matches.length===0&&stages.length===1 ? stages[0] : null;
    const old=stage?matches.find(l=>l.stage_id===stage.id):null;
    const conflict=matches.length>1||(matches.length===1&&!old);
    const changes={};
@@ -2498,23 +2546,23 @@ async function preview(){
     if(p.area&&measurementChanged(old.area,p.area,'area'))changes.area=p.area.trim();
     if(p.registration&&normalizedRegistration(old.title)!==normalizedRegistration(p.registration))changes.title=p.registration.trim();
    }
-   const blocked=isDup||!stage||conflict;
-   const flag=isDup?'Duplicate in PDF':!stage?'Stage not found':conflict?'Lot number conflict':!old?'New lot':Object.keys(changes).length?'Update':'No change';
-   return {...p,stageId:stage?.id,old,changes,flag,blocked};
+   const blocked=isDup||!stage||conflict||!!p.priceQualifier;
+   const flag=isDup?'Duplicate in file':!stage?'Stage missing or ambiguous':conflict?'Lot number conflict':p.priceQualifier?'Offers over — manual review':!old?'New lot':Object.keys(changes).length?'Update':'No change';
+   return {...p,stage:stage?.name||p.stage,stageId:stage?.id,old,changes,flag,blocked};
   });
   pending={estateId,name,rows,fileName:file.name};
   renderPending();
- }catch(e){out.textContent='PDF preview: '+e.message;}
+ }catch(e){out.textContent='Import preview: '+e.message;}
 }
 function renderPending(){
  const out=$('lfPdfResults');if(!pending||!out)return;
  const {name,rows}=pending,issues=rows.filter(r=>r.blocked).length,actionable=rows.filter(r=>!r.blocked&&r.flag!=='No change').length;
- out.innerHTML='<p><b>'+esc(name)+'</b> · '+rows.length+' PDF rows · '+issues+' needing attention · '+actionable+' proposed changes. <b>Nothing saved yet.</b></p>'+ 
+ out.innerHTML='<p><b>'+esc(name)+'</b> · '+rows.length+' extracted rows · '+issues+' needing attention · '+actionable+' proposed changes. <b>Nothing saved yet.</b></p>'+ 
  '<div class="cloud-row"><button type="button" id="lfPdfSelectAll">Select all changes</button><button type="button" id="lfPdfSelectNone">Clear selection</button></div>'+ 
  '<div class="pdf-table-wrap"><table><thead><tr><th>Apply</th><th>Stage</th><th>Lot</th><th>Current price</th><th>PDF price</th><th>Changes</th><th>Result</th></tr></thead><tbody>'+rows.map((r,i)=>{
  const ok=!r.blocked&&r.flag!=='No change';const desc=r.flag==='New lot'?'New lot: price, frontage, area, registration':Object.keys(r.changes).map(k=>k+': '+(r.old?.[k]??'—')+' → '+r.changes[k]).join('; ')||'—';
  return '<tr><td><input type="checkbox" data-pdf-check="'+i+'" '+(ok?'checked':'disabled')+'></td><td>'+esc(r.stage)+'</td><td>'+esc(r.lot)+'</td><td>'+(r.old?.price==null?'—':'$'+Number(r.old.price).toLocaleString('en-AU'))+'</td><td>$'+r.price.toLocaleString('en-AU')+'</td><td>'+esc(desc)+'</td><td>'+esc(r.flag)+'</td></tr>';}).join('')+'</tbody></table></div>'+ 
- '<p class="pdf-note pdf-alert">Statuses never change from PDF imports. Lots absent from the PDF are untouched. Blank PDF fields do not erase saved data. Approved changes update the shared LIVE database.</p>'+ 
+ '<p class="pdf-note pdf-alert">Check all extracted numbers carefully, especially images. Offers-over prices are blocked from automatic saving. Statuses never change from imports. Lots absent from the PDF are untouched. Blank PDF fields do not erase saved data. Approved changes update the shared LIVE database.</p>'+ 
  '<button type="button" id="lfPdfApprove" class="cloud-primary" '+(actionable?'':'disabled')+'>Review & approve selected changes</button><p id="lfPdfSaveMessage" role="status" class="pdf-note"></p>';
  $('lfPdfSelectAll').onclick=()=>out.querySelectorAll('[data-pdf-check]:not(:disabled)').forEach(c=>c.checked=true);
  $('lfPdfSelectNone').onclick=()=>out.querySelectorAll('[data-pdf-check]').forEach(c=>c.checked=false);
